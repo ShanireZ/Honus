@@ -5,6 +5,8 @@
 *.user
 *.suo
 *.nupkg
+*.binlog
+[Tt]est[Rr]esults/
 
 # === 编辑器 ===
 .vscode/
@@ -24,6 +26,16 @@ agent.config.json
 *.sqlite
 /images/
 /archive/
+
+# === 证书 / 环境机密(切勿提交) ===
+.env
+.env.*
+!.env.example
+*.pfx
+*.snk
+*.key
+*.pem
+*.log
 
 # === 依赖(未来服务器端) ===
 node_modules/

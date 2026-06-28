@@ -1,0 +1,14 @@
+# 文本默认统一为 LF(仓库与工作区一致),消除 Windows 上 LF↔CRLF 抖动(本机 autocrlf=true)
+* text=auto eol=lf
+
+# Windows 批处理脚本必须 CRLF(用 LF 可能不被执行)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制:禁止任何 EOL / 编码转换
+*.png    binary
+*.webp   binary
+*.ico    binary
+*.db     binary
+*.sqlite binary
+*.nupkg  binary
