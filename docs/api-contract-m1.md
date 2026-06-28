@@ -1,0 +1,158 @@
+# M1 接口契约 — Agent ↔ Server
+
+- 项目：**Honus** · 里程碑：M1（最小闭环）
+- 日期：2026-06-28
+- 关联：[architecture-v0.2.md](architecture-v0.2.md) · [../schema/schema.sql](../schema/schema.sql) · [../agent/](../agent/)
+
+本契约定义采集端 Agent 与监考服务器之间的两条通道，以及落库数据模型。字段命名与 `Honus.Agent` 代码、`schema.sql` 严格一致。
+
+## 0. 通用约定
+
+- **传输基址**：`ws(s)://<server>:<port>` 与 `http(s)://<server>:<port>`，局域网内同一台/同一组服务器。
+- **编码**：所有 JSON 为 UTF-8、**camelCase** 字段名；枚举值为 **snake_case** 字符串。
+- **时间**：`ts` = Agent 本机时钟，Unix 秒（含小数，毫秒精度）；`recvTs` = 服务器接收时钟。考前 NTP 对齐。
+- **序号 `seq`**：每个 Agent 维护单调递增计数器，事件与图片**共用**同一序号空间。服务器按 `(agentId, seq)` 幂等去重，支持断网续传重发。
+- **鉴权 / 防篡改**：预共享密钥（PSK，每场考试或每 Agent 一把）。
+  - 事件：每条带 `sig = HMAC-SHA256(PSK, hashSelf + "\n" + seq)`。
+  - 图片：HTTP 头带 `X-Honus-Sig = HMAC-SHA256(PSK, canonical(headers) + sha256(body))`。
+  - 握手：WebSocket 连接时附 `X-Honus-Auth` 头（见 §1.1）。
+
+### 0.1 哈希链 canonical 规则（两端必须逐字节一致）
+`hashSelf = SHA256( hashPrev + "\n" + canonicalCore )`，其中 `canonicalCore` =
+对下列字段**按此固定顺序**做 JSON 序列化（camelCase 键、snake_case 枚举、无多余空白、null 字段省略）：
+```
+examId, seatId, agentId, machineId, ts, type, payload, risk, evidenceImageId, seq
+```
+首条 `hashPrev = "GENESIS"`。`sig`、`hashPrev`、`hashSelf` 本身**不参与** `canonicalCore`。
+
+> 注：归档清理非关键事件后整链会断（见 architecture §13.2），故复验以"单条事件 ↔ 其 `hashSelf`/`sig`"为准。
+
+## 1. 事件通道（WebSocket）
+
+### 1.1 连接
+```
+GET  ws://<server>:<port>/ingest/events?examId=E1&seatId=A07&agentId=ag-A07
+Header: X-Honus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
+```
+握手成功后，**Agent 首帧**发送 `hello`，**服务器**回 `hello_ack`（含服务器已知的最大 `seq`，用于 Agent 决定从哪续传）。
+
+### 1.2 Agent → Server 帧
+
+**事件帧**（一条信号一帧）：
+```jsonc
+{
+  "v": 1,
+  "type": "event",
+  "event": {
+    "examId": "E1", "seatId": "A07", "agentId": "ag-A07", "machineId": "PC-A07",
+    "ts": 1750000000.123,
+    "type": "browser_url",            // 见 §3 事件类型
+    "payload": { "process": "chrome", "url": "https://chat.openai.com/", "whitelisted": false },
+    "risk": 80,
+    "evidenceImageId": "img_8f1c…",   // 若该事件触发了抓图；否则省略
+    "hashPrev": "…", "hashSelf": "…", "seq": 1287
+  },
+  "seq": 1287,
+  "sig": "…hmac…"
+}
+```
+**hello 帧**：
+```jsonc
+{ "v":1, "type":"hello", "agentId":"ag-A07", "examId":"E1", "seatId":"A07",
+  "machineId":"PC-A07", "agentVersion":"0.1.0", "ts":1750000000.0 }
+```
+
+### 1.3 Server → Agent 帧
+| type | 含义 | 字段 |
+|---|---|---|
+| `hello_ack` | 握手确认 | `maxSeq`（服务器已收到的最大 seq，Agent 从 `maxSeq+1` 续传） |
+| `ack` | 批量确认 | `upto`（已持久化的最大 seq；Agent 可丢弃缓冲中 ≤upto 的） |
+| `config_update` | 下发新配置 | `config`（白名单 / 阈值 / 截图参数，热更新） |
+| `capture_now` | 请求立即抓图 | `reason`（监考员手动点名抓图） |
+| `ping` / `pong` | 保活 | `ts` |
+
+### 1.4 可靠性
+- Agent 发送后本地暂存，收到 `ack.upto ≥ seq` 才删除。
+- 断网：事件落本地缓冲；重连 → `hello` → 依 `hello_ack.maxSeq` 从断点续传。
+- 服务器按 `(agentId, seq)` 唯一约束去重，重复帧静默忽略。
+
+## 2. 图片通道（HTTP）
+
+### 2.1 上传截图
+```
+POST http://<server>:<port>/ingest/images
+Content-Type: image/webp
+X-Honus-Exam:    E1
+X-Honus-Seat:    A07
+X-Honus-Agent:   ag-A07
+X-Honus-Seq:     1288
+X-Honus-Trigger: event:browser        // event:browser | event:paste | event:process | event:usb | baseline_random
+X-Honus-Phash:   9f3c1a22b0e4d7f1     // dHash 64bit, 16 hex
+X-Honus-Ts:      1750000000.456
+X-Honus-Sig:     <hex hmac>
+<body = WebP 字节>
+```
+**响应 200**：
+```jsonc
+{ "stored": true, "imageId": "img_8f1c…", "duplicate": false, "ocrQueued": true }
+```
+- `imageId`：服务器分配（uuid）。触发型抓图的 Agent 会把它写进**随后**那条事件的 `evidenceImageId`。
+- `duplicate: true`：服务器侧 pHash 命中近重复，未另存原图（仍返回已存的 imageId）。
+- 原图按 `images/<examId>/<seatId>/<imageId>.webp` 存文件系统；DB 只存指针（见 §4 `images`）。
+
+### 2.2 击键节奏上报（判题网页前端 → 服务器，旁路）
+```
+POST http://<server>:<port>/ingest/keystroke
+Content-Type: application/json
+{ "examId":"E1", "seatId":"A07", "submissionId":"sub_42", "ts":1750000000.0,
+  "timeline":[12,98,210,…],            // keydown 相对毫秒(可降采样)
+  "features":{ "pasteCount":1, "maxBurstCharsPerSec":140, "idleThenBlock":true } }
+```
+> 该通道来自判题前端、不经 Agent；服务器据 `features` 给 `keystroke_samples.risk` 打分。
+
+## 3. 事件类型与 payload
+
+| `type` | 触发 | payload 关键字段 | 典型 risk |
+|---|---|---|---|
+| `window_focus` | 前台窗口变化 | `title`, `process`, `hwnd` | 0 |
+| `browser_url` | 浏览器地址变化 | `process`, `url`, `whitelisted`；或 `url:null,note:"url_unreadable"` | 白名单 0 / 非白名单 80 / 读不到 40 |
+| `process_start` | 进程启动 | `name`, `pid`, `cmd`, `whitelisted` | 白名单 0 / 非白名单 70 |
+| `process_exit` | 进程退出 | `name`, `pid` | 0 |
+| `clipboard` | 剪贴板更新 | `len`, `lines`, `large`（**不含明文**） | 大段 60 |
+| `alt_tab_burst` | 切窗爆发 | `count`, `windowSec` | 40（M2） |
+| `usb` | 可移动设备到达 | `drive` | 50 |
+| `screenshot` | 显式截图事件（可选） | `trigger`, `imageId` | — |
+| `heartbeat` | 30s 心跳 | `status` | 0 |
+
+> `risk` 由 Agent 本地初判；服务器分析（L2/L3）会再叠加，最终决定是否入 `suspicious_queue`。
+
+## 4. 数据模型（live DB，权威 DDL = schema.sql）
+
+核心表（字段详见 [../schema/schema.sql](../schema/schema.sql)）：
+
+| 表 | 作用 | 关键列 |
+|---|---|---|
+| `exams` | 考试 | `exam_id, status, started_at, ended_at` |
+| `seats` | 座位↔学员↔机器↔Agent | `(exam_id, seat_id), student_id, agent_id` |
+| `events` | 事件流 | `(agent_id, seq) UNIQUE`, `type, payload(JSON), risk, evidence_image_id, hash_self, sig` |
+| `images` | 截图指针 | `image_id, trigger, phash, file_path, uploaded_to_ocr, is_evidence` |
+| `ocr_results` | 云 OCR 结果（L2） | `image_id, text, hits, confidence` |
+| `logo_hits` | Logo 匹配（L3） | `image_id, label, score, bbox` |
+| `vec_images` | CLIP 向量（sqlite-vec） | `image_id, embedding FLOAT[512]` |
+| `keystroke_samples` | 击键节奏 | `seat_id, timeline, features, risk` |
+| `suspicious_queue` | 可疑队列（人工裁决） | `kind, score, status, refs, reviewer, decided_at` |
+| `agent_heartbeats` | 在线状态 | `agent_id, ts, status` |
+
+### 4.1 关键关系
+- `events.evidence_image_id → images.image_id`（触发型抓图）。
+- `images.image_id → ocr_results / logo_hits / vec_images`（一图多分析）。
+- `suspicious_queue.refs` = JSON 数组，引用 `events.id` / `images.image_id`，是归档"关键数据"的判据之一。
+
+## 5. M1 服务器最小职责清单
+1. 起 WS `/ingest/events` 与 HTTP `/ingest/images`、`/ingest/keystroke`，校验 `X-Honus-Auth` / `sig`。
+2. 落库到 `events` / `images`（含 `(agent_id, seq)` 幂等去重），原图存盘。
+3. L1 已在 Agent 完成；服务器对 `risk ≥ 阈值` 的事件写 `suspicious_queue`。
+4. 简易看板：座位在线（心跳）+ 可疑队列列表 + 点开看证据图与时间线。
+5. （M2 起）将需要文字判定的图按 §5/architecture 收口送云 OCR，回填 `ocr_results`。
+
+> L2 云 OCR、L3 Logo、CLIP 向量、归档作业属 M2/M3，本契约预留字段，M1 不实现。

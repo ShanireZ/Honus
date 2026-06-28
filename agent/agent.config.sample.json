@@ -1,0 +1,20 @@
+{
+  "examId": "E1-2026-06-28",
+  "seatId": "A07",
+  "agentId": "ag-A07",
+  "machineId": "PC-A07",
+
+  "serverWsBase": "ws://192.168.1.10:8080",
+  "serverHttpBase": "http://192.168.1.10:8080",
+  "psk": "REPLACE_ME_base64_32byte_key_AAAAAAAAAAAAAAA=",
+
+  "targetHeight": 1080,
+  "webpQuality": 75,
+  "baselineMinSeconds": 30,
+  "baselineMaxSeconds": 90,
+
+  "largePasteThreshold": 200,
+
+  "whitelistHosts": ["judge.exam.lan", "oj.school.lan"],
+  "whitelistProcs": ["code", "devenv", "cl", "g++", "gcc", "mingw32-make", "explorer", "honus.agent"]
+}
