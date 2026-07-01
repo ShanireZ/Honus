@@ -1,8 +1,18 @@
 using Horus.Contracts;
+using Horus.Server.Analysis.Vision;
 using Horus.Server.Api;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Ingest;
+
+// ---- 密钥加密工具:`Horus.Server protect-secret <明文key>` 打印 DPAPI 密文,粘进 config 的 visionApiKeyEnc(不存明文) ----
+if (args.Length >= 1 && args[0] == "protect-secret")
+{
+    if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("protect-secret 仅 Windows(DPAPI)可用。"); return; }
+    string plain = args.Length >= 2 ? args[1] : (Console.ReadLine() ?? "");
+    Console.WriteLine(SecretProtect.Protect(plain));
+    return;
+}
 
 // ---- 配置加载(JSON) + 环境变量覆盖(便于测试/部署) ----
 string cfgPath = Environment.GetEnvironmentVariable("HORUS_CONFIG")
@@ -16,6 +26,10 @@ cfg = cfg with
     KeystrokeSecretBase64 = Environment.GetEnvironmentVariable("HORUS_KSK_B64") ?? cfg.KeystrokeSecretBase64,
     AdminToken = Environment.GetEnvironmentVariable("HORUS_ADMIN_TOKEN") ?? cfg.AdminToken,
     Urls = Environment.GetEnvironmentVariable("HORUS_URLS") ?? cfg.Urls,
+    VisionProvider = Environment.GetEnvironmentVariable("HORUS_VISION_PROVIDER") ?? cfg.VisionProvider,
+    VisionBaseUrl = Environment.GetEnvironmentVariable("HORUS_VISION_BASEURL") ?? cfg.VisionBaseUrl,
+    VisionModel = Environment.GetEnvironmentVariable("HORUS_VISION_MODEL") ?? cfg.VisionModel,
+    VisionApiKey = Environment.GetEnvironmentVariable("HORUS_VISION_KEY") ?? cfg.VisionApiKey,
 };
 
 // ---- 解析数据目录与 DB 数据源 ----
@@ -47,6 +61,21 @@ builder.Services.AddSingleton<AgentHub>();          // 在线 Agent 注册表(co
 builder.Services.AddSingleton<EventIngest>();
 builder.Services.AddSingleton<ImageIngest>();
 builder.Services.AddSingleton<KeystrokeIngest>();
+
+// ---- 视觉分析(L2:视觉 LLM 取代 OCR + L3 Logo)。provider-agnostic:mock / OpenAI 兼容(DeepSeek/MiMo/Qwen/GLM) ----
+if (cfg.VisionEnabled)
+{
+    IVisionAnalyzer analyzer = string.Equals(cfg.VisionProvider, "openai", StringComparison.OrdinalIgnoreCase)
+        ? new OpenAiCompatibleVisionAnalyzer(
+            new HttpClient { Timeout = TimeSpan.FromSeconds(60) },
+            cfg.VisionBaseUrl ?? throw new InvalidOperationException("visionProvider=openai 需配 visionBaseUrl"),
+            cfg.VisionModel ?? throw new InvalidOperationException("visionProvider=openai 需配 visionModel"),
+            SecretProtect.Resolve(cfg))   // env 明文 > visionApiKeyEnc(DPAPI 解密) > visionApiKey 明文
+        : new MockVisionAnalyzer();
+    builder.Services.AddSingleton(analyzer);
+}
+builder.Services.AddSingleton<VisionAnalysisService>();               // 未注册 IVisionAnalyzer 时内部 no-op
+builder.Services.AddHostedService(sp => sp.GetRequiredService<VisionAnalysisService>());
 
 WebApplication app = builder.Build();
 

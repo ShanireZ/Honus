@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!-- 监考服务器:接收(WS 事件 + HTTP 图片/击键) + 落库(SQLite + 文件) + 简易看板。
-       net8.0(非 -windows):笔记本上 Windows 可跑,也便于测试。对外联网仅 M2 云 OCR。 -->
+       net8.0(非 -windows):笔记本上 Windows 可跑,也便于测试。对外联网仅 M2 视觉 LLM 识图。 -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.28" />
+    <!-- DPAPI:视觉端点 API key 加密存储配置文件(不存明文),读取时机器绑定解密。仅 Windows 运行时。 -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

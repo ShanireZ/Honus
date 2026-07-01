@@ -32,8 +32,10 @@ dotnet run -c Debug                                # 或运行已发布 exe
 | `adminToken` | 管理/看板令牌。浏览器经 `POST /api/login` 换 **HttpOnly cookie**；脚本客户端用 `X-Horus-Admin` 头（图片字节兼容 `?t=`）。留空=关闭管理鉴权（仅联调）。**生产必配**，防学员机下发配置关检测/拉证据图/抹裁决 |
 | `riskThreshold` | **有效风险** ≥ 此值入可疑队列（默认 50）。有效风险 = max(Agent 自报 risk, 服务器独立复判 server_risk) |
 | `onlineWindowSeconds` / `recentRiskWindowSeconds` | 座位在线判定 / 热力风险统计窗口 |
+| `visionProvider` | 视觉分析（L2）:留空/`off`=关 · `mock` · `openai`（OpenAI 兼容:DeepSeek-V4/MiMo-V2.5/Qwen-VL/GLM-4V·换 `visionBaseUrl`+`visionModel`+`visionApiKey` 即换供应商） |
+| `visionConfidenceThreshold` / `visionAnalyzeBaseline` | 视觉命中入队置信度阈值（默认 60）/ 是否也分析随机基线图（默认否·§5 最小化） |
 
-环境变量可覆盖配置（便于测试/部署）：`HORUS_CONFIG` `HORUS_DATADIR` `HORUS_DBPATH` `HORUS_PSK_B64` `HORUS_KSK_B64` `HORUS_ADMIN_TOKEN` `HORUS_URLS`。
+环境变量可覆盖配置（便于测试/部署）：`HORUS_CONFIG` `HORUS_DATADIR` `HORUS_DBPATH` `HORUS_PSK_B64` `HORUS_KSK_B64` `HORUS_ADMIN_TOKEN` `HORUS_URLS` `HORUS_VISION_PROVIDER` `HORUS_VISION_BASEURL` `HORUS_VISION_MODEL` `HORUS_VISION_KEY`。
 
 ## 端点
 **采集端（Agent ↔ Server）**

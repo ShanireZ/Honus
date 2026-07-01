@@ -590,6 +590,66 @@ public class DbReadWriteTests
     }
 }
 
+/// 视觉 adapter JSON 解析:容忍 ```json 围栏 / 前后噪声,健壮取字段。
+public class VisionParseTests
+{
+    [Fact]
+    public void 容忍围栏与噪声_取全字段()
+    {
+        var v = Horus.Server.Analysis.Vision.OpenAiCompatibleVisionAnalyzer.Parse(
+            "这是判定结果:\n```json\n{\"suspicious\":true,\"category\":\"web_ai\",\"confidence\":88," +
+            "\"hits\":[\"chatgpt\"],\"evidence\":\"检测到 AI 对话界面\",\"text\":\"如何用C++实现\"}\n```");
+        Assert.NotNull(v);
+        Assert.True(v!.Suspicious);
+        Assert.Equal("web_ai", v.Category);
+        Assert.Equal("web_ai", v.Kind());
+        Assert.Equal(88, v.Confidence);
+        Assert.Contains("chatgpt", v.Hits);
+        Assert.Equal("如何用C++实现", v.Text);
+    }
+
+    [Fact]
+    public void 置信度越界钳制_缺字段回退()
+    {
+        var v = Horus.Server.Analysis.Vision.OpenAiCompatibleVisionAnalyzer.Parse(
+            "{\"suspicious\":false,\"confidence\":999}");
+        Assert.NotNull(v);
+        Assert.False(v!.Suspicious);
+        Assert.Equal(100, v.Confidence);        // clamp 到 0..100
+        Assert.Equal("none", v.Category);        // 缺 category → none
+        Assert.Empty(v.Hits);
+    }
+
+    [Fact]
+    public void 无JSON_返回null()
+        => Assert.Null(Horus.Server.Analysis.Vision.OpenAiCompatibleVisionAnalyzer.Parse("模型拒答,无结构化输出"));
+}
+
+/// 视觉端点 API key DPAPI 加密存储:配置文件不存明文,读取时解密。DPAPI 仅 Windows。
+public class SecretProtectTests
+{
+    [Fact]
+    public void DPAPI往返_密文非明文_解得回原文()
+    {
+        if (!OperatingSystem.IsWindows()) return;   // DPAPI 仅 Windows(部署=Windows 笔记本)
+        const string key = "sk-mimo-secret-key-1234567890";
+        string enc = Horus.Server.Config.SecretProtect.Protect(key);
+        Assert.NotEqual(key, enc);
+        Assert.DoesNotContain(key, enc);            // 配置里存的不是明文
+        Assert.Equal(key, Horus.Server.Config.SecretProtect.Unprotect(enc));   // 读取时解得回原文
+    }
+
+    [Fact]
+    public void Resolve优先级_明文env先于密文_密文次之()
+    {
+        // 明文字段(env 已覆盖进 VisionApiKey)优先
+        Assert.Equal("plain-key",
+            Horus.Server.Config.SecretProtect.Resolve(new Horus.Server.Config.ServerConfig { VisionApiKey = "plain-key", VisionApiKeyEnc = "ignored" }));
+        // 都无 → 空串(不抛)
+        Assert.Equal("", Horus.Server.Config.SecretProtect.Resolve(new Horus.Server.Config.ServerConfig()));
+    }
+}
+
 /// 可切换失败的 HTTP 处理器:Fail=true 时抛异常(模拟图片通道离线),否则转发到内层(TestServer)。
 public sealed class ToggleFailHandler : DelegatingHandler
 {

@@ -29,6 +29,22 @@ public sealed record ServerConfig
     /// 允许在非 loopback 绑定下缺 PSK / 管理令牌启动(裸奔)。默认 false = fail-closed。仅联调开。
     public bool AllowInsecure { get; init; }
 
+    // ---- 视觉分析(L2:视觉 LLM 取代 OCR + L3 Logo,合并单一视觉级)----
+    /// 视觉分析器:留空/"off" = 关(默认) | "mock"(确定性·测试联调) | "openai"(OpenAI 兼容端点)。
+    public string? VisionProvider { get; init; }
+    /// OpenAI 兼容视觉端点基址(DeepSeek-V4 / MiMo-V2.5 / Qwen-VL / GLM-4V 通用)。provider="openai" 时用。
+    public string? VisionBaseUrl { get; init; }
+    /// 视觉模型名(如 deepseek-v4-pro / MiMo-V2.5)。
+    public string? VisionModel { get; init; }
+    /// 视觉端点 API key **明文**(仅联调;生产请用 visionApiKeyEnc 加密存储)。env HORUS_VISION_KEY 覆盖。
+    public string? VisionApiKey { get; init; }
+    /// 视觉端点 API key **DPAPI 密文**(base64·配置文件不存明文)。在部署机上跑 `protect-secret` 生成。见 SecretProtect。
+    public string? VisionApiKeyEnc { get; init; }
+    /// 视觉判定入可疑队列的置信度阈值(默认 60)。
+    public int VisionConfidenceThreshold { get; init; } = 60;
+    /// 是否也分析随机基线图(默认 false = 只分析触发型,§5 最小化上传/成本)。
+    public bool VisionAnalyzeBaseline { get; init; }
+
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。
     public int RiskThreshold { get; init; } = 50;
 
@@ -55,6 +71,10 @@ public sealed record ServerConfig
 
     [JsonIgnore]
     public bool AdminAuthEnabled => !string.IsNullOrEmpty(AdminToken);
+
+    [JsonIgnore]
+    public bool VisionEnabled => !string.IsNullOrWhiteSpace(VisionProvider)
+                                 && !string.Equals(VisionProvider, "off", StringComparison.OrdinalIgnoreCase);
 
     private static readonly JsonSerializerOptions Opt = new()
     {

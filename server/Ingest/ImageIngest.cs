@@ -1,4 +1,5 @@
 using Horus.Contracts;
+using Horus.Server.Analysis.Vision;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Microsoft.Data.Sqlite;
@@ -6,8 +7,8 @@ using Microsoft.Data.Sqlite;
 namespace Horus.Server.Ingest;
 
 /// 图片通道(HTTP POST /ingest/images)。见 api-contract §2.1。
-/// 校验 X-Horus-Sig;pHash 去重;原图存盘;DB 存指针。
-public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogger<ImageIngest> log)
+/// 校验 X-Horus-Sig;pHash 去重;原图存盘;DB 存指针;新图入队异步视觉分析(L2)。
+public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, VisionAnalysisService vision, ILogger<ImageIngest> log)
 {
     public async Task HandleAsync(HttpContext ctx)
     {
@@ -128,7 +129,12 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
             }
         });
 
-        await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued = false });
+        // 送异步视觉分析(§5 最小化:触发型必送;随机基线按配置抽样)。视觉关时 no-op、不占本请求延迟。
+        bool ocrQueued = vision.Enabled
+            && (trigger.StartsWith("event:", StringComparison.Ordinal) || cfg.VisionAnalyzeBaseline);
+        if (ocrQueued) vision.Enqueue(imageId);
+
+        await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued });
     }
 
     /// 客户端 id 格式校验(防路径注入):img_ + 至多 64 位字母数字。

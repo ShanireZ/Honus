@@ -522,6 +522,69 @@ public class IngestTests
         Assert.Equal(1, susp.GetArrayLength());   // 只入队一次
     }
 
+    [Fact]
+    public async Task 视觉分析_识别AI界面_落库并入可疑队列()
+    {
+        using var app = new TestApp(visionMock: true);
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        // 上传一张(触发型)含 AICHAT 标记的图 → 后台 Mock 视觉分析判 web_ai(置信 95)
+        byte[] webp = Encoding.ASCII.GetBytes("RIFF....WEBP AICHAT on screen");
+        string cid = "img_" + Guid.NewGuid().ToString("N");
+        await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 5, "event:browser",
+            "aabbccddeeff0011", "1750000000.100", expectDuplicate: false, clientId: cid);
+
+        // 后台异步:等可疑队列出现 web_ai(vision)
+        await WaitForAsync(async () =>
+        {
+            JsonElement s = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+            return s.GetArrayLength() == 1 && s[0].GetProperty("kind").GetString() == "web_ai";
+        });
+
+        JsonElement susp = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+        Assert.Equal("web_ai", susp[0].GetProperty("kind").GetString());
+        Assert.Equal(95, susp[0].GetProperty("score").GetInt32());
+        Assert.Contains("vision:", susp[0].GetProperty("note").GetString());
+
+        // 图元数据:已送分析 + 标为证据
+        JsonElement meta = await http.GetFromJsonAsync<JsonElement>($"/api/images/{cid}/meta");
+        Assert.True(meta.GetProperty("uploadedToOcr").GetBoolean());
+        Assert.True(meta.GetProperty("isEvidence").GetBoolean());
+    }
+
+    [Fact]
+    public async Task 视觉分析_良性截图_已分析但不入队()
+    {
+        using var app = new TestApp(visionMock: true);
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        byte[] webp = Encoding.ASCII.GetBytes("RIFF....WEBP normal code editor view");
+        string cid = "img_" + Guid.NewGuid().ToString("N");
+        await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 5, "event:browser",
+            "aabbccddeeff0011", "1750000000.100", expectDuplicate: false, clientId: cid);
+
+        // 等分析跑完(uploaded_to_ocr=1),再确认无可疑(良性图不制造假阳性)
+        await WaitForAsync(async () =>
+        {
+            JsonElement m = await http.GetFromJsonAsync<JsonElement>($"/api/images/{cid}/meta");
+            return m.GetProperty("uploadedToOcr").GetBoolean();
+        });
+        JsonElement susp = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+        Assert.Equal(0, susp.GetArrayLength());
+    }
+
+    private static async Task WaitForAsync(Func<Task<bool>> cond, int timeoutMs = 8000)
+    {
+        for (int waited = 0; waited < timeoutMs; waited += 50)
+        {
+            if (await cond()) return;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException("条件未在超时内满足");
+    }
+
     // ---- 图片上传小工具 ----
     private static async Task<string> UploadImageAsync(HttpClient http, byte[] webp,
         string exam, string seat, string agent, long seq, string trigger, string phash, string ts,

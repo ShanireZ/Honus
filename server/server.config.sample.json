@@ -25,5 +25,18 @@
   "riskThreshold": 50,
   "dedupImagesByPhash": true,
   "onlineWindowSeconds": 90,
-  "recentRiskWindowSeconds": 300
+  "recentRiskWindowSeconds": 300,
+
+  // 视觉分析(L2:视觉 LLM 取代 OCR + L3 Logo,合并单一视觉级)。一次调用做文字提取+界面/图标识别+分类。
+  // visionProvider: 留空/off=关(默认) | mock(确定性·联调) | openai(OpenAI 兼容端点)。
+  //   openai 通吃小米 MiMo-V2.5 / DeepSeek-V4 / Qwen-VL / GLM-4V —— 换供应商=换 baseUrl+model+key。
+  //   ★ owner 选定 = 小米 MiMo-V2.5 托管 API(境内云,OpenAI 兼容):
+  "visionProvider": "openai",
+  "visionBaseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+  "visionModel": "MiMo-V2.5",
+  // API key **不存明文**:在部署机上跑 `Horus.Server protect-secret <你的key>` 得 DPAPI 密文,粘到 visionApiKeyEnc。
+  //   联调可临时用 HORUS_VISION_KEY 环境变量注入明文(优先级最高)。
+  "visionApiKeyEnc": "",
+  "visionConfidenceThreshold": 60,
+  "visionAnalyzeBaseline": false
 }

@@ -62,7 +62,11 @@ dotnet test  Horus.sln -c Debug      # 运行端到端测试
 - ✅ **keystroke 会话鉴权**（闭合 §10.1 栽赃）：判题后端持 **KSK** 对整条 body 签名 `X-Horus-KSig=HMAC(KSK,"keystroke\n"+sha256(body))`；改 seatId 栽赃即破签 → 401。域分隔前缀防跨通道重用。
 - ✅ **admin 令牌改 HttpOnly cookie + SameSite=Strict + CSP**：`POST /api/login` 校验后种 cookie（JS 读不到、`<img>` 自动携带、不进 URL）；gate 接受 cookie/头/`?t=`（后二者兼容）；`/api/login /api/logout` 免鉴权；全响应附 CSP/nosniff/X-Frame-Options/Referrer-Policy。
 - ✅ **DB 读写分离**（§10.2 吞吐天花板）：单写连接（写锁串行）+ 独立只读连接（WAL 并发读）；看板 6 个 GET 走只读连接与写路径互不阻塞；`:memory:` 回退单连接（测试无感）；`Pooling=false`。单写者仍用写锁（Channel 因 ack 契约无收益,作规模余量留后续）。
-- ⏳ 待办（记入 architecture §10.1/§10.2/§15）：**分析增强 M2**（L2 云 OCR + L3 Logo + 风险评分聚合，L2 待供应商）；M3（完整 canonical 复算 + 哈希链复验 / 归档清理任务 / CLIP 按图搜图）。里程碑见 architecture §15。
+**M2 分析增强 · 视觉 LLM 引擎（骨架已实现 · 57 项测试全绿）**：
+- ✅ **L2 视觉 LLM 识图取代 OCR + L3 Logo（owner 拍板·合并单一视觉级）**：一次「看懂画面」同时做文字提取 + AI 对话界面/搜索页/IDE 幽灵补全/远控工具识别 + 分类,结构化直出 `{suspicious,category,confidence,evidence}`。**provider-agnostic**:`IVisionAnalyzer` 接口 + `MockVisionAnalyzer`(确定性·测试联调·不出网)+ `OpenAiCompatibleVisionAnalyzer`(DeepSeek-V4 / 小米 MiMo-V2.5 / Qwen-VL / GLM-4V 皆 OpenAI 兼容 → 换 `visionBaseUrl`+`visionModel`+`visionApiKey` 即换供应商)。
+- ✅ **异步后台分析**(`VisionAnalysisService` + `Channel`,**不占 ingest 热路径**):图入库 → 入队 → 判定 → 落 `ocr_results` + 标证据 + 引用事件抬 `server_risk` + 入可疑队列(note=`vision:证据`)。视觉关时整链 no-op。
+- ✅ **供应商已定 = 小米 MiMo-V2.5 托管 API(境内云·OpenAI 兼容)**:`visionProvider=openai` · `visionBaseUrl=https://token-plan-cn.xiaomimimo.com/v1` · `visionModel=MiMo-V2.5`。**API key 不存明文**:`SecretProtect`(Windows DPAPI 机器范围)—— 部署机上跑 `Horus.Server protect-secret <key>` 得密文,粘进 `visionApiKeyEnc`,启动时解密进内存(联调可用 `HORUS_VISION_KEY` 明文注入,优先级最高)。
+- ⏳ **待收尾**:① §5 真裁剪浏览器区 / 打码身份(现 `VisionAnalysisService.AnalyzeOneAsync` 直传 stub·需服务器端图像库 decode/redact/re-encode);② 拿真 key 对 `token-plan-cn.xiaomimimo.com/v1` 真机 smoke 一张图验证判定;③ 基线抽样策略。再往后 M3（完整 canonical 复算 + 哈希链复验 / 归档清理任务 / CLIP 按图搜图）。里程碑见 architecture §15。
 
 ## 提交约定
 默认不提交，除非用户明确要求。commit 信息用中文，简洁。

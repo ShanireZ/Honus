@@ -22,7 +22,7 @@ public sealed class TestApp : WebApplicationFactory<Program>
 
     private readonly string _dataDir;
 
-    public TestApp(bool adminAuth = false, bool keystrokeAuth = false)
+    public TestApp(bool adminAuth = false, bool keystrokeAuth = false, bool visionMock = false)
     {
         _dataDir = Path.Combine(Path.GetTempPath(), "horus-test-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(_dataDir);
@@ -31,6 +31,7 @@ public sealed class TestApp : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("HORUS_PSK_B64", PskB64);
         Environment.SetEnvironmentVariable("HORUS_KSK_B64", keystrokeAuth ? KskB64 : null);       // null 清除 → 默认击键鉴权关
         Environment.SetEnvironmentVariable("HORUS_ADMIN_TOKEN", adminAuth ? AdminToken : null);  // null 清除 → 默认管理鉴权关
+        Environment.SetEnvironmentVariable("HORUS_VISION_PROVIDER", visionMock ? "mock" : null);  // null 清除 → 默认视觉分析关
         Environment.SetEnvironmentVariable("HORUS_URLS", "http://127.0.0.1:0");                   // loopback → 不触发 fail-closed
     }
 
