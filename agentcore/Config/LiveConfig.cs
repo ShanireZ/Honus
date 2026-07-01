@@ -43,11 +43,12 @@ public sealed class LiveConfig
             _hosts = new(hosts, StringComparer.OrdinalIgnoreCase);
         if (TryArray(c, "whitelistProcs", out List<string> procs))
             _procs = new(procs.Select(p => p.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
-        if (TryInt(c, "largePasteThreshold", out int lp)) _largePaste = Math.Max(1, lp);
-        if (TryInt(c, "targetHeight", out int th)) _targetHeight = Math.Max(1, th);
+        // 上下限钳制:防止(可能来自被冒用的下发端)极端值造成资源风暴,如 targetHeight=10万、baseline=1s。
+        if (TryInt(c, "largePasteThreshold", out int lp)) _largePaste = Math.Clamp(lp, 1, 100_000);
+        if (TryInt(c, "targetHeight", out int th)) _targetHeight = Math.Clamp(th, 240, 2160);
         if (TryInt(c, "webpQuality", out int wq)) _webpQuality = Math.Clamp(wq, 1, 100);
-        if (TryInt(c, "baselineMinSeconds", out int bmin)) _baselineMin = Math.Max(1, bmin);
-        if (TryInt(c, "baselineMaxSeconds", out int bmax)) _baselineMax = Math.Max(1, bmax);
+        if (TryInt(c, "baselineMinSeconds", out int bmin)) _baselineMin = Math.Clamp(bmin, 5, 3600);
+        if (TryInt(c, "baselineMaxSeconds", out int bmax)) _baselineMax = Math.Clamp(bmax, 5, 3600);
         if (_baselineMin > _baselineMax) (_baselineMin, _baselineMax) = (_baselineMax, _baselineMin);
     }
 

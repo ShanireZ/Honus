@@ -10,6 +10,23 @@
   <!-- 全局错误横幅（fetch 失败时显示，非静默失败） -->
   <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
 
+  <!-- ========== 登录门（全屏遮罩，无令牌或收到 401 时显示） ========== -->
+  <div class="login-gate" id="loginGate" hidden>
+    <div class="login-card" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div class="login-card__brand">
+        <span class="brand__logo" aria-hidden="true">◈</span>
+        <span class="brand__title">Honus 监考台</span>
+      </div>
+      <h1 class="login-card__title" id="loginTitle">请输入监考管理令牌</h1>
+      <p class="login-card__hint" id="loginHint">令牌用于访问监考数据，仅保存在本机浏览器。</p>
+      <form class="login-form" id="loginForm" autocomplete="off">
+        <input type="password" id="tokenInput" class="login-input"
+          placeholder="在此粘贴管理令牌" aria-label="管理令牌" autocomplete="off" />
+        <button type="submit" class="btn btn--primary login-submit" id="tokenSubmit">进入</button>
+      </form>
+    </div>
+  </div>
+
   <!-- ========== 顶部栏 ========== -->
   <header class="topbar">
     <div class="topbar__brand">
@@ -48,6 +65,7 @@
       </label>
       <button id="manualRefresh" class="btn btn--ghost" title="立即刷新">刷新</button>
       <span class="topbar__clock" id="clock" title="最后刷新时间">--:--:--</span>
+      <button id="logoutBtn" class="btn btn--ghost" title="清除本机保存的令牌并重新登录">更换令牌</button>
     </div>
   </header>
 

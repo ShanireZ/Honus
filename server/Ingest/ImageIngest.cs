@@ -20,6 +20,7 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
         string phash = req.Headers["X-Honus-Phash"].ToString();
         string tsStr = req.Headers["X-Honus-Ts"].ToString();
         string sig = req.Headers["X-Honus-Sig"].ToString();
+        string clientId = req.Headers["X-Honus-Image-Id"].ToString();   // 客户端预生成 id(纳入签名)
 
         if (string.IsNullOrEmpty(examId) || string.IsNullOrEmpty(seatId) || string.IsNullOrEmpty(agentId))
         {
@@ -34,14 +35,20 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
             await req.Body.CopyToAsync(ms);
             body = ms.ToArray();
         }
+        if (body.Length == 0)   // 空 body 不落库(否则存一张 0 字节坏图)
+        {
+            ctx.Response.StatusCode = 400;
+            await ctx.Response.WriteAsJsonAsync(new { error = "empty_body" });
+            return;
+        }
 
         long.TryParse(seqStr, out long seq);
         double.TryParse(tsStr, System.Globalization.CultureInfo.InvariantCulture, out double ts);
 
-        // 验签(见 §2.1):HMAC(PSK, canonicalHeaders + "\n" + sha256(body))
+        // 验签(见 §2.1):HMAC(PSK, canonicalHeaders + "\n" + sha256(body));canonical 含 imageId 防篡改
         if (cfg.AuthEnabled)
         {
-            string canon = Auth.ImageCanonicalHeaders(examId, seatId, agentId, seq, trigger, phash, tsStr);
+            string canon = Auth.ImageCanonicalHeaders(examId, seatId, agentId, seq, trigger, phash, tsStr, clientId);
             string want = Auth.ImageSig(cfg.Psk!, canon, body);
             if (string.IsNullOrEmpty(sig) || !Crypto.FixedTimeEquals(sig, want))
             {
@@ -53,7 +60,6 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
         }
 
         // 客户端预生成 imageId(触发型抓图):幂等沿用,以保证"事件 ↔ 证据图"关联跨断线不断。
-        string clientId = req.Headers["X-Honus-Image-Id"].ToString();
         bool hasClientId = IsValidImageId(clientId);
 
         string imageId;
@@ -97,14 +103,20 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
 
         db.Locked(conn =>
         {
-            using SqliteCommand c = conn.Cmd(
+            using (SqliteCommand c = conn.Cmd(
                 @"INSERT INTO images (image_id,exam_id,seat_id,agent_id,ts,recv_ts,trigger,phash,file_path,format,bytes,uploaded_to_ocr,is_evidence)
                   VALUES (@id,@e,@s,@a,@ts,@recv,@trig,@ph,@fp,'webp',@bytes,0,0)
                   ON CONFLICT(image_id) DO NOTHING",
                 ("@id", imageId), ("@e", examId), ("@s", seatId), ("@a", agentId),
                 ("@ts", ts), ("@recv", recvTs), ("@trig", trigger), ("@ph", phash),
-                ("@fp", relPath), ("@bytes", (long)body.Length));
-            c.ExecuteNonQuery();
+                ("@fp", relPath), ("@bytes", (long)body.Length)))
+                c.ExecuteNonQuery();
+
+            // 反向补标:若事件先于图片到达(在线双通道乱序),此刻回填 is_evidence,避免归档误清证据图
+            using SqliteCommand mk = conn.Cmd(
+                "UPDATE images SET is_evidence=1 WHERE image_id=@id AND EXISTS (SELECT 1 FROM events WHERE evidence_image_id=@id)",
+                ("@id", imageId));
+            mk.ExecuteNonQuery();
         });
 
         await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued = false });

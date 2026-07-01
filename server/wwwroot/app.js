@@ -19,7 +19,8 @@
     large_paste:        { label: "大段粘贴",     fg: "#ffd27f", bg: "#3a2c07", bd: "#a9841f" },
     usb:                { label: "USB 设备",     fg: "#ff9a9d", bg: "#3a1315", bd: "#c14045" },
     ide_plugin_suspect: { label: "IDE 插件",     fg: "#a0f0c0", bg: "#123324", bd: "#2f8a5c" },
-    browser_unreadable: { label: "浏览器不可读", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" }
+    browser_unreadable: { label: "浏览器不可读", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" },
+    non_whitelist_web:  { label: "非白名单网站", fg: "#ffb3c1", bg: "#3a1520", bd: "#b0455f" }
   };
   function kindMeta(kind) {
     return KIND_META[kind] || { label: kind || "未知", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" };
@@ -84,24 +85,90 @@
     toastTimer = setTimeout(function () { el.hidden = true; }, 6000);
   }
 
-  /* ---------- fetch 封装：JSON + 错误可见 ---------- */
-  function apiGet(path) {
-    if (USE_MOCK) return mockGet(path);
-    return fetch(path, { headers: { "Accept": "application/json" } })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status + " · " + path);
-        return r.json();
-      });
+  /* ============================================================
+     管理令牌鉴权
+     ------------------------------------------------------------
+     冻结契约：
+       · 所有 /api/* 请求带 HTTP 头 X-Honus-Admin: <token>（GET/POST 皆然）。
+       · 图片字节端点 /api/images/{id} 无法设请求头，额外接受 ?t=<token>；
+         /api/images/{id}/meta（JSON）仍走 api() + 头。
+       · 令牌错误/缺失 → /api/* 返回 401。
+       · 服务器未配置令牌（本地联调）时 /api/* 正常放行、不返回 401——
+         所以逻辑是「遇到 401 才要令牌」，而非「无令牌就不发请求」。
+     令牌存 localStorage（key = honus_admin_token）。
+     ============================================================ */
+  var TOKEN_KEY = "honus_admin_token";
+
+  function getToken() {
+    try { return window.localStorage.getItem(TOKEN_KEY) || ""; }
+    catch (e) { return ""; }   // 隐私模式等禁用 localStorage 时降级为空
   }
-  function apiPost(path, body) {
-    if (USE_MOCK) return mockPost(path, body);
+  function setToken(tok) {
+    try { window.localStorage.setItem(TOKEN_KEY, tok); } catch (e) {}
+  }
+  function clearToken() {
+    try { window.localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+  }
+
+  // 给图片字节 URL 附带令牌查询参数（<img> 无法设请求头，只能走 ?t=）。
+  // 供 /api/images/{id} 缩略图/灯箱大图使用；/meta 不走这里（走 api()+头）。
+  function imageUrl(imageId) {
+    var base = "/api/images/" + encodeURIComponent(imageId);
+    if (USE_MOCK) return base;             // mock 不经真实 /api，无需带令牌
+    var tok = getToken();
+    return tok ? base + "?t=" + encodeURIComponent(tok) : base;
+  }
+
+  /* ---------- 统一 fetch 封装：自动加令牌头 + 401 → 登录门 ---------- */
+  // 401 处理：清空数据、停止轮询、弹登录门、给中文提示，绝不静默失败或白屏。
+  // 抛出的错误带 .isAuth 标记，调用方的 .catch 只需照常 showToast（已弹门）。
+  function handleUnauthorized() {
+    stopPolling();
+    clearCurrentData();
+    showLoginGate("令牌无效或已过期，请重新登录");
+  }
+
+  function api(path, options) {
+    if (USE_MOCK) {
+      // mock 分流：GET 无 body → mockGet；POST → mockPost
+      if (options && options.method === "POST") {
+        return mockPost(path, options.body ? JSON.parse(options.body) : {});
+      }
+      return mockGet(path);
+    }
+    var opts = options || {};
+    var headers = { "Accept": "application/json" };
+    if (opts.headers) {
+      Object.keys(opts.headers).forEach(function (k) { headers[k] = opts.headers[k]; });
+    }
+    // 附带令牌头（有则带；无令牌时也照发——联调模式下服务器会放行，
+    // 只有真配置了令牌的服务器才会因缺头/错头返回 401）。
+    var tok = getToken();
+    if (tok) headers["X-Honus-Admin"] = tok;
+
     return fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify(body)
+      method: opts.method || "GET",
+      headers: headers,
+      body: opts.body
     }).then(function (r) {
+      if (r.status === 401) {
+        handleUnauthorized();
+        var authErr = new Error("未授权（401）");
+        authErr.isAuth = true;
+        throw authErr;
+      }
       if (!r.ok) throw new Error("HTTP " + r.status + " · " + path);
       return r.json();
+    });
+  }
+
+  // 兼容旧调用点：apiGet / apiPost 现在只是 api() 的薄封装。
+  function apiGet(path) { return api(path); }
+  function apiPost(path, body) {
+    return api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
     });
   }
 
@@ -130,6 +197,15 @@
     bindQueueFilter();
     bindDrawer();
     bindLightbox();
+    bindLoginGate();
+
+    // ── 启动引导 ──────────────────────────────────────────────
+    // mock 模式：直接进（不经真实 /api，不受鉴权影响，用于目视布局）。
+    // 真实模式：首次加载先「不弹门」直接试拉数据——
+    //   · 200（有令牌或联调放行）→ 直接用，登录门保持隐藏；
+    //   · 401 → api() 里的 handleUnauthorized() 自动弹门要令牌。
+    // 即使本地已存令牌也照此流程：让服务器裁决，而不是前端预判。
+    hideLoginGate();
     loadExams();
   }
 
@@ -144,6 +220,65 @@
       state.autoRefresh = e.target.checked;
       restartPolling();
     });
+    // 更换/退出令牌：清 localStorage → 停轮询 → 清屏 → 弹登录门
+    $("#logoutBtn").addEventListener("click", function () {
+      clearToken();
+      stopPolling();
+      clearCurrentData();
+      showLoginGate("请输入监考管理令牌");
+    });
+  }
+
+  /* ============================================================
+     登录门：显示/隐藏 + 表单提交
+     ============================================================ */
+  function showLoginGate(msg) {
+    var hint = $("#loginHint");
+    if (msg) {
+      hint.textContent = msg;
+      // 「无效/过期」类提示标红，普通提示保持弱色
+      hint.classList.toggle("is-error", /无效|过期/.test(msg));
+    }
+    $("#loginGate").hidden = false;
+    var input = $("#tokenInput");
+    input.value = "";
+    // 让输入框拿到焦点（延迟一帧，避开遮罩刚显示时的布局）
+    setTimeout(function () { try { input.focus(); } catch (e) {} }, 0);
+  }
+  function hideLoginGate() {
+    $("#loginGate").hidden = true;
+  }
+
+  function bindLoginGate() {
+    $("#loginForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var tok = $("#tokenInput").value.trim();
+      if (!tok) {
+        var hint = $("#loginHint");
+        hint.textContent = "令牌不能为空";
+        hint.classList.add("is-error");
+        return;
+      }
+      setToken(tok);          // 存 localStorage
+      hideLoginGate();
+      loadExams();            // 带令牌头重新拉取；若仍 401 会再次弹门
+    });
+  }
+
+  // 停止轮询（401 / 退出令牌时用；restartPolling 会在有令牌数据后重启）
+  function stopPolling() {
+    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  }
+
+  // 清空当前视图数据（401 / 切换令牌时用），避免残留旧数据误导
+  function clearCurrentData() {
+    state.exams = [];
+    state.seats = [];
+    state.suspicious = [];
+    state.inflight = false;
+    closeDrawer();
+    closeLightbox();
+    showEmptyEverything("请先登录以加载数据");
   }
 
   function bindQueueFilter() {
@@ -194,6 +329,7 @@
         restartPolling();
       })
       .catch(function (err) {
+        if (err && err.isAuth) return;   // 401 已弹登录门，无需再报错
         showToast("加载考试列表失败：" + err.message);
         showEmptyEverything("无法连接后端，等待重试");
       });
@@ -241,7 +377,9 @@
      轮询：切换考试/开关时清理旧定时器
      ============================================================ */
   function restartPolling() {
-    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+    stopPolling();
+    // 登录门开着时不启动轮询（避免无令牌轮询风暴）；登录成功后再由此处启动。
+    if ($("#loginGate") && !$("#loginGate").hidden) return;
     if (state.autoRefresh && state.currentExamId) {
       state.pollTimer = setInterval(refreshCurrent, POLL_MS);
     }
@@ -267,6 +405,7 @@
       updateOverview();
       $("#clock").textContent = fmtTime(Date.now() / 1000);
     }).catch(function (err) {
+      if (err && err.isAuth) return;   // 401 已停轮询 + 弹登录门
       showToast("刷新失败：" + err.message);
       // 失败时不清屏，保留上一份可见数据（克制重试：等下一轮 5s）
     }).finally(function () {
@@ -285,7 +424,10 @@
         state.suspicious = Array.isArray(list) ? list : [];
         renderQueue();
       })
-      .catch(function (err) { showToast("加载可疑队列失败：" + err.message); });
+      .catch(function (err) {
+        if (err && err.isAuth) return;   // 401 已弹登录门
+        showToast("加载可疑队列失败：" + err.message);
+      });
   }
 
   /* ============================================================
@@ -451,7 +593,7 @@
           refsHtml +=
             '<div class="ref-line"><b>image</b> ' + esc(id) + "</div>" +
             '<div class="evidence" data-img="' + esc(id) + '">' +
-            '<img src="/api/images/' + encodeURIComponent(id) +
+            '<img src="' + esc(imageUrl(id)) +
             '" alt="证据图 ' + esc(id) + '" loading="lazy" ' +
             'onerror="this.parentNode.innerHTML=\'<div class=&quot;loading&quot;>图片加载失败</div>\'"/>' +
             "</div>";
@@ -504,7 +646,7 @@
     // 证据图点击放大
     body.querySelectorAll(".evidence").forEach(function (ev) {
       ev.addEventListener("click", function () {
-        openLightbox("/api/images/" + encodeURIComponent(ev.getAttribute("data-img")));
+        openLightbox(imageUrl(ev.getAttribute("data-img")));
       });
     });
 
@@ -540,7 +682,10 @@
         refreshCurrent();     // 顺带刷新座位/概览
         showToast("已" + (status === "confirmed" ? "确认违规" : "驳回") + "：" + id);
       })
-      .catch(function (err) { showToast("裁决提交失败：" + err.message); });
+      .catch(function (err) {
+        if (err && err.isAuth) return;   // 401 已弹登录门（抽屉已被清屏关闭）
+        showToast("裁决提交失败：" + err.message);
+      });
   }
 
   /* ---------- 座位详情 ---------- */
@@ -575,6 +720,7 @@
         renderTimeline(Array.isArray(events) ? events : []);
       })
       .catch(function (err) {
+        if (err && err.isAuth) return;   // 401 已弹登录门（抽屉已被清屏关闭）
         var l = $("#tlLoading");
         if (l) l.textContent = "事件加载失败：" + err.message;
       });
@@ -649,7 +795,7 @@
       var thumb = "";
       if (ev.evidenceImageId) {
         thumb =
-          '<img class="thumb" src="/api/images/' + encodeURIComponent(ev.evidenceImageId) +
+          '<img class="thumb" src="' + esc(imageUrl(ev.evidenceImageId)) +
           '" alt="证据缩略图" loading="lazy" data-img="' + esc(ev.evidenceImageId) + '" ' +
           'onerror="this.style.display=\'none\'"/>';
       }
@@ -668,7 +814,7 @@
       var thumbEl = item.querySelector(".thumb");
       if (thumbEl) {
         thumbEl.addEventListener("click", function () {
-          openLightbox("/api/images/" + encodeURIComponent(thumbEl.getAttribute("data-img")));
+          openLightbox(imageUrl(thumbEl.getAttribute("data-img")));
         });
       }
       tl.appendChild(item);

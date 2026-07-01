@@ -85,7 +85,7 @@ internal static class Program
         foreach (ISignalSource s in sources) s.Signal += Handle;
 
         // 连接管理(握手/hello/续传/断线重连)在后台常驻,直到 cts 取消
-        _ = Task.Run(() => uplink.RunAsync(cts.Token));
+        Task uplinkTask = Task.Run(() => uplink.RunAsync(cts.Token));
         foreach (ISignalSource s in sources)
         {
             try { s.Start(); }
@@ -99,6 +99,7 @@ internal static class Program
         cts.Token.WaitHandle.WaitOne();
 
         foreach (ISignalSource s in sources) { try { s.Stop(); s.Dispose(); } catch { /* ignore */ } }
+        try { uplinkTask.Wait(TimeSpan.FromSeconds(3)); } catch { /* 等连接循环退出再释放,避免 dispose 竞态 */ }
         uplink.DisposeAsync().AsTask().GetAwaiter().GetResult();
         return 0;
     }

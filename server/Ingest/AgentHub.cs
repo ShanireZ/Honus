@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Honus.Server.Ingest;
 
@@ -30,9 +32,15 @@ public sealed class AgentHub
     public Conn Register(string agentId, string examId, WebSocket ws)
     {
         var c = new Conn { ExamId = examId, Ws = ws };
+        if (_conns.TryGetValue(agentId, out Conn? old))
+            try { old.Ws.Abort(); } catch { /* 关旧连接:保证每 agent 至多一条活动连接 */ }
         _conns[agentId] = c;   // 重连覆盖旧连接
         return c;
     }
+
+    /// 用序列化器构造 config_update 帧(不用字符串拼接,避免帧结构被破坏)。
+    public static string BuildConfigFrame(string configJson)
+        => JsonSerializer.Serialize(new { v = 1, type = "config_update", config = JsonNode.Parse(configJson) });
 
     public void Unregister(string agentId, Conn c)
     {
@@ -47,7 +55,7 @@ public sealed class AgentHub
     public async Task<int> PushConfigAsync(string examId, string configJson, CancellationToken ct)
     {
         _config[examId] = configJson;
-        string frame = "{\"v\":1,\"type\":\"config_update\",\"config\":" + configJson + "}";
+        string frame = BuildConfigFrame(configJson);
         int n = 0;
         foreach (KeyValuePair<string, Conn> kv in _conns)
         {

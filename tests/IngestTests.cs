@@ -41,7 +41,7 @@ public class IngestTests
         await Ws.SendAsync(ws, evt);
         JsonElement evAck = await Ws.ReceiveAsync(ws);
         Assert.Equal("ack", evAck.GetProperty("type").GetString());
-        Assert.Equal(1, evAck.GetProperty("upto").GetInt64());
+        Assert.Equal(1, evAck.GetProperty("seq").GetInt64());   // 逐条 ack 本条 seq
 
         JsonElement events = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/events?seatId=A07");
         Assert.Equal(1, events.GetArrayLength());
@@ -63,6 +63,71 @@ public class IngestTests
         Assert.Equal(1, events2.GetArrayLength());
         JsonElement susp2 = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
         Assert.Equal(1, susp2.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ack_逐条确认本条seq_非MAX水位()
+    {
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        using WebSocket ws = await app.ConnectEventsAsync("E1", "A07", "ag-A07");
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws); // hello_ack
+
+        await Ws.SendAsync(ws, Ws.SignedEvent("E1", "A07", "ag-A07", "PC-A07", SignalType.BrowserUrl,
+            new() { ["process"] = "chrome", ["url"] = "https://chat.openai.com/", ["whitelisted"] = false }, 80, seq: 9));
+        JsonElement ack = await Ws.ReceiveAsync(ws);
+        Assert.Equal("ack", ack.GetProperty("type").GetString());
+        Assert.Equal(9, ack.GetProperty("seq").GetInt64());       // 确认的是本条 seq
+        Assert.False(ack.TryGetProperty("upto", out _));          // 不再有范围 upto(否则空洞会误删)
+    }
+
+    [Fact]
+    public async Task browser读不到URL_无视阈值_强制入可疑队列()
+    {
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        using WebSocket ws = await app.ConnectEventsAsync("E1", "A07", "ag-A07");
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws);
+        // risk=40 < 阈值50,但 note=url_unreadable → 仍须入队(强制人工看截图的兜底)
+        await Ws.SendAsync(ws, Ws.SignedEvent("E1", "A07", "ag-A07", "PC-A07", SignalType.BrowserUrl,
+            new() { ["process"] = "chrome", ["url"] = null, ["note"] = "url_unreadable" }, 40, 1));
+        await Ws.ReceiveAsync(ws); // ack
+
+        JsonElement susp = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+        Assert.Equal(1, susp.GetArrayLength());
+        Assert.Equal("browser_unreadable", susp[0].GetProperty("kind").GetString());
+    }
+
+    [Fact]
+    public async Task 事件先于图片到达_图片后到时回填is_evidence()
+    {
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+        const string imgId = "img_0011223344556677";
+
+        using WebSocket ws = await app.ConnectEventsAsync("E1", "A07", "ag-A07");
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws);
+        // 事件先到,引用一个此刻尚不存在的证据图
+        await Ws.SendAsync(ws, Ws.SignedEvent("E1", "A07", "ag-A07", "PC-A07", SignalType.BrowserUrl,
+            new() { ["process"] = "chrome", ["url"] = "https://chat.openai.com/", ["whitelisted"] = false },
+            80, 1, evidenceImageId: imgId));
+        await Ws.ReceiveAsync(ws); // ack
+
+        // 图片后到(带同一 client id)→ 应回填 is_evidence
+        byte[] webp = Encoding.ASCII.GetBytes("RIFF-late-arriving-evidence");
+        await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 2, "event:browser",
+            "aabbccddeeff0011", "1750000000.500", expectDuplicate: false, clientId: imgId);
+
+        JsonElement meta = await http.GetFromJsonAsync<JsonElement>($"/api/images/{imgId}/meta");
+        Assert.True(meta.GetProperty("isEvidence").GetBoolean());
     }
 
     [Fact]
@@ -208,6 +273,34 @@ public class IngestTests
     }
 
     [Fact]
+    public async Task 管理端点_无令牌401_有令牌放行_图片用查询令牌()
+    {
+        using var app = new TestApp(adminAuth: true);
+        HttpClient http = app.CreateClient();
+
+        // 无令牌 → 401(挡住学员机调 config/decide/读数据)
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/exams")).StatusCode);
+
+        // 错令牌 → 401
+        var bad = new HttpRequestMessage(HttpMethod.Get, "/api/exams");
+        bad.Headers.Add("X-Honus-Admin", "wrong");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(bad)).StatusCode);
+
+        // 对令牌 → 放行(200)
+        var ok = new HttpRequestMessage(HttpMethod.Get, "/api/exams");
+        ok.Headers.Add("X-Honus-Admin", TestApp.AdminToken);
+        Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(ok)).StatusCode);
+
+        // 图片字节端点用 ?t= 查询令牌(<img> 无法设头):对令牌过鉴权(404 而非 401),无令牌 401
+        Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/api/images/nope?t={TestApp.AdminToken}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("/api/images/nope")).StatusCode);
+
+        // /ingest/* 不受管理令牌影响(采集面走 PSK,不走 admin token)
+        Assert.NotEqual(HttpStatusCode.Unauthorized, (await http.PostAsync("/ingest/keystroke",
+            new StringContent("{}", System.Text.Encoding.UTF8, "application/json"))).StatusCode);
+    }
+
+    [Fact]
     public async Task 图片_客户端预生成id_幂等沿用()
     {
         using var app = new TestApp();
@@ -235,7 +328,7 @@ public class IngestTests
         string exam, string seat, string agent, long seq, string trigger, string phash, string ts,
         bool expectDuplicate, string? clientId = null)
     {
-        string canon = Auth.ImageCanonicalHeaders(exam, seat, agent, seq, trigger, phash, ts);
+        string canon = Auth.ImageCanonicalHeaders(exam, seat, agent, seq, trigger, phash, ts, clientId ?? "");
         string sig = Auth.ImageSig(TestApp.Psk, canon, webp);
 
         var req = new HttpRequestMessage(HttpMethod.Post, "/ingest/images");

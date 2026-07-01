@@ -53,8 +53,9 @@ dotnet test  Honus.sln -c Debug      # 运行端到端测试
 - ✅ **Agent 端可靠性完成**：握手鉴权、hello/hello_ack、ack、**断线重连（指数退避）**、**断网缓冲 + 续传**（`UplinkClient` + `LocalBuffer`，服务器幂等去重），图片 HMAC 签名 + 补传。
 - ✅ **config_update 热更新**：服务器 `POST /api/exams/{examId}/config` → `AgentHub` 推送给在线 Agent（新连/重连在 hello 时补推）→ Agent `LiveConfig` 原子应用（白名单/阈值/截图参数，下一轮采集即生效）。
 - ✅ **证据图跨重连关联**：触发型抓图**客户端预生成 imageId**（`X-Honus-Image-Id`，服务器沿用、跳过 pHash 去重、幂等），离线缓冲 + 断线重连补传后 `evidenceImageId` 关联不断。
-- ✅ **19 项测试全绿**（server ingest 11 + LocalBuffer 2 + 重连/续传/证据关联 3 + LiveConfig+config推送 3）+ 真机跑通（Agent 事件/图片 → 落库/去重/入队 → 看板热力/复核/证据图）。
-- ⏳ 待办：M2 云 OCR + L3 Logo + 风险评分；M3 CLIP / 完整哈希链复验 / 归档作业。里程碑见 architecture §15。
+- ✅ **三路独立审计（安全 / 并发与数据完整性 / 正确性与契约）+ 修复**：修掉两条会丢证据的 Critical（`ack` 改**逐条确认**杜绝空洞误删、**序号高水位持久化**杜绝重启复用）、`trigger` 映射为契约值、`is_evidence` 乱序回填、`url_unreadable` 强制入队、缓冲原子压实 + 崩溃恢复、Schema DDL 切分健壮化；安全加固：**管理令牌 `X-Honus-Admin`（/api 全鉴权）**、图片体/WS 帧大小上限、`X-Honus-Image-Id` 纳入签名、`LiveConfig` 上下限钳制、路径穿越边界、旧连接 Abort、Dispose 竞态。
+- ✅ **33 项测试全绿**（含审计发现的回归：逐条 ack / 重启不复用 seq / trigger 映射 / is_evidence 回填 / Schema 分号健壮 / 管理鉴权 401·200·?t=）+ 真机跑通（含管理令牌 401/200/?t= curl 验证）。
+- ⏳ 待办（已记入 architecture §10.1 残留风险）：M2 完整 canonical 复算 + 哈希链复验 + 签名时效防重放 + keystroke 会话鉴权 + 云 OCR + L3 Logo；M3 CLIP / 归档作业。里程碑见 architecture §15。
 
 ## 提交约定
 默认不提交，除非用户明确要求。commit 信息用中文，简洁。

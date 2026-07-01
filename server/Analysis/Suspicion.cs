@@ -31,7 +31,7 @@ public static class Suspicion
                     if (MatchAny(host, AiHosts)) return "web_ai";
                     if (MatchAny(host, SearchHosts)) return "search";
                 }
-                return "web_ai";   // 判题考中任何非白名单浏览都归 web_ai 类可疑(M1 简化)
+                return "non_whitelist_web";   // 非 AI/非搜索的非白名单站:中性标签,别误贴 web_ai
             case SignalType.ProcessStart: return "non_whitelist_proc";
             case SignalType.Clipboard:    return "large_paste";
             case SignalType.Usb:          return "usb";

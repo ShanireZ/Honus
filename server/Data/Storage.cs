@@ -31,7 +31,9 @@ public sealed class Storage
     public string? Resolve(string relPath)
     {
         string full = Path.GetFullPath(Path.Combine(_root, relPath));
-        return full.StartsWith(_root, StringComparison.OrdinalIgnoreCase) ? full : null;
+        // 边界须带路径分隔符,否则 "C:\data" 会误匹配 "C:\data-evil\..."
+        string rootWithSep = _root.EndsWith(Path.DirectorySeparatorChar) ? _root : _root + Path.DirectorySeparatorChar;
+        return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 
     private static string Safe(string s)

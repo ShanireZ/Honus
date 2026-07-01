@@ -16,7 +16,7 @@ public class LocalBufferTests
         => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "honus-buf-" + Guid.NewGuid().ToString("N")[..10])).FullName;
 
     [Fact]
-    public async Task 事件_入队_快照升序_按upto压实()
+    public async Task 事件_入队_快照升序_逐条精确删除不误删()
     {
         string dir = TempDir();
         try
@@ -31,10 +31,55 @@ public class LocalBufferTests
             Assert.Equal(1, snap[0].seq);           // 升序
             Assert.Equal("{\"a\":2}", snap[1].json);
 
-            b.CompactEventsUpTo(2);                  // 删除 ≤2
+            // 逐条 ack:删 seq=2,**seq=1 与 seq=3 必须都还在**(证明不是范围压实,不会连坐删掉低 seq)
+            b.RemoveEvent(2);
             var snap2 = b.SnapshotPendingEvents();
-            Assert.Single(snap2);
-            Assert.Equal(3, snap2[0].seq);
+            Assert.Equal(2, snap2.Count);
+            Assert.Equal(1, snap2[0].seq);
+            Assert.Equal(3, snap2[1].seq);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void 序号高水位持久化_重启后不复用()
+    {
+        string dir = TempDir();
+        try
+        {
+            var b = new LocalBuffer(dir);
+            b.SaveSeqCeiling(500);
+            Assert.Equal(500, b.LoadSeqCeiling());
+            // 模拟"重启":新 LocalBuffer 实例读到同一高水位
+            var b2 = new LocalBuffer(dir);
+            Assert.Equal(500, b2.LoadSeqCeiling());
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void 重启后NextSeq不复用旧seq()
+    {
+        string dir = TempDir();
+        try
+        {
+            var cfg = new AgentConfig
+            {
+                ExamId = "E", SeatId = "S", AgentId = "A", MachineId = "M",
+                ServerWsBase = "ws://x", ServerHttpBase = "http://x", Psk = TestApp.Psk,
+            };
+            Func<Uri, CancellationToken, Task<WebSocket>> noConnect = (_, __) => throw new InvalidOperationException("test: no connect");
+
+            var u1 = new UplinkClient(cfg, new LocalBuffer(dir), http: new HttpClient(), wsConnect: noConnect);
+            long s1 = u1.NextSeq();     // 1(预留一个 block 落盘)
+            long s2 = u1.NextSeq();     // 2
+
+            // 模拟进程重启:同目录新 buffer + 新 uplink,读回持久化的高水位
+            var u2 = new UplinkClient(cfg, new LocalBuffer(dir), http: new HttpClient(), wsConnect: noConnect);
+            long s3 = u2.NextSeq();
+
+            Assert.True(s3 > s2, $"重启复用了旧 seq: s3={s3} s2={s2}");
+            Assert.True(s3 > 256, $"应越过已持久化的预留块: s3={s3}");
         }
         finally { Directory.Delete(dir, true); }
     }
@@ -293,6 +338,42 @@ public class ReconnectTests
             await uplink.DisposeAsync();
         }
         finally { Directory.Delete(dir, true); }
+    }
+}
+
+/// CaptureReason → 契约 trigger 映射(C3 回归)。
+public class TriggerMapTests
+{
+    [Theory]
+    [InlineData("baseline_random", "baseline_random")]
+    [InlineData("browser_non_whitelist_url", "event:browser")]
+    [InlineData("browser_url_unreadable", "event:browser")]
+    [InlineData("non_whitelist_process", "event:process")]
+    [InlineData("large_paste", "event:paste")]
+    [InlineData("usb_insert", "event:usb")]
+    [InlineData("capture_now", "event:manual")]
+    public void ToContract_映射到契约取值(string reason, string expected)
+        => Assert.Equal(expected, Honus.Agent.Transport.TriggerMap.ToContract(reason));
+}
+
+/// Schema 应用健壮性:注释里的分号不能劈裂 DDL(F5 回归)。
+public class SchemaTests
+{
+    [Fact]
+    public void 建表_注释含分号不劈裂_关键表齐全()
+    {
+        using var db = new Honus.Server.Data.Db(":memory:");
+        foreach (string table in new[] { "exams", "seats", "events", "images", "ocr_results", "logo_hits", "keystroke_samples", "suspicious_queue", "agent_heartbeats" })
+        {
+            bool exists = db.Locked(conn =>
+            {
+                using var c = conn.CreateCommand();
+                c.CommandText = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=$n";
+                c.Parameters.AddWithValue("$n", table);
+                return c.ExecuteScalar() is not null;
+            });
+            Assert.True(exists, $"表 {table} 未建立(可能被注释里的分号劈裂)");
+        }
     }
 }
 

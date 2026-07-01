@@ -93,7 +93,7 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
         // 该考试若已设配置,连上即推一次,使新连 / 重连的 Agent 拿到当前配置
         string? cfgJson = hub.GetConfig(conn.ExamId);
         if (cfgJson is not null)
-            await conn.SendAsync("{\"v\":1,\"type\":\"config_update\",\"config\":" + cfgJson + "}", ct);
+            await conn.SendAsync(AgentHub.BuildConfigFrame(cfgJson), ct);
     }
 
     private async Task OnEventAsync(AgentHub.Conn link, JsonElement frame, CancellationToken ct)
@@ -129,12 +129,12 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
 
         double recvTs = Now();
 
-        (long? newId, long uptoSeq) = db.Locked(conn =>
+        long? newId = db.Locked(conn =>
         {
             using SqliteCommand ins = conn.Cmd(
                 @"INSERT INTO events (exam_id,seat_id,agent_id,seq,ts,recv_ts,type,payload,risk,evidence_image_id,hash_prev,hash_self,sig)
                   VALUES (@exam,@seat,@agent,@seq,@ts,@recv,@type,@payload,@risk,@ev,@hp,@hs,@sig)
-                  ON CONFLICT(agent_id,seq,type) DO NOTHING",
+                  ON CONFLICT(agent_id,seq) DO NOTHING",
                 ("@exam", examId), ("@seat", seatId), ("@agent", agentId), ("@seq", seq),
                 ("@ts", ts), ("@recv", recvTs), ("@type", typeStr), ("@payload", payloadRaw),
                 ("@risk", risk), ("@ev", evidenceImageId), ("@hp", hashPrev), ("@hs", hashSelf), ("@sig", sig));
@@ -152,29 +152,33 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
                     using SqliteCommand mk = conn.Cmd("UPDATE images SET is_evidence=1 WHERE image_id=@id", ("@id", evidenceImageId));
                     mk.ExecuteNonQuery();
                 }
-
-                // 心跳 → 写在线表
-                if (typeStr == "heartbeat")
-                {
-                    string status = TryGetPayloadStr(payloadRaw, "status") ?? "alive";
-                    using SqliteCommand hb = conn.Cmd(
-                        "INSERT OR IGNORE INTO agent_heartbeats (agent_id,exam_id,seat_id,ts,status) VALUES (@a,@e,@s,@ts,@st)",
-                        ("@a", agentId), ("@e", examId), ("@s", seatId), ("@ts", ts), ("@st", status));
-                    hb.ExecuteNonQuery();
-                }
             }
 
-            using SqliteCommand mc = conn.Cmd("SELECT COALESCE(MAX(seq),0) FROM events WHERE agent_id=@a", ("@a", agentId));
-            long upto = Convert.ToInt64(mc.ExecuteScalar());
-            return (id, upto);
+            // 心跳写在线表:不论新旧都刷新(重传旧心跳写旧 ts 无害,不拉低 MAX(ts) 的新鲜度)
+            if (typeStr == "heartbeat")
+            {
+                string status = TryGetPayloadStr(payloadRaw, "status") ?? "alive";
+                using SqliteCommand hb = conn.Cmd(
+                    "INSERT INTO agent_heartbeats (agent_id,exam_id,seat_id,ts,status) VALUES (@a,@e,@s,@ts,@st) ON CONFLICT(agent_id,ts) DO UPDATE SET status=@st",
+                    ("@a", agentId), ("@e", examId), ("@s", seatId), ("@ts", ts), ("@st", status));
+                hb.ExecuteNonQuery();
+            }
+
+            return id;
         });
 
-        // 只对新落库、且达阈值的事件入可疑队列(避免重传重复入队)
-        if (newId is not null && risk >= cfg.RiskThreshold && typeStr != "heartbeat")
+        // 只对新落库事件入可疑队列(避免重传重复入队);browser_unreadable 无视阈值(强制人工看截图的兜底)
+        if (newId is not null && typeStr != "heartbeat" &&
+            (risk >= cfg.RiskThreshold || IsForcedReview(typeStr, payloadRaw)))
             EnqueueSuspicious(examId, seatId, ts, typeStr, risk, newId.Value, evidenceImageId, payloadRaw);
 
-        await link.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "ack", upto = uptoSeq }), ct);
+        // 逐条 ack 本条 seq(不用范围 upto):即使 seq 空间有空洞,也不会误删从未送达的低 seq 事件
+        await link.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "ack", seq }), ct);
     }
+
+    /// 抓不到 URL 的降级信号 = 强制人工复核(无视风险阈值),否则该兜底链断在最后一步。
+    private static bool IsForcedReview(string typeStr, string payloadRaw)
+        => typeStr == "browser_url" && TryGetPayloadStr(payloadRaw, "note") == "url_unreadable";
 
     private void EnqueueSuspicious(string examId, string seatId, double ts, string typeStr,
         int risk, long eventId, string? evidenceImageId, string payloadRaw)

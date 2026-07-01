@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS events (
   hash_prev         TEXT,
   hash_self         TEXT,
   sig               TEXT,
-  UNIQUE (agent_id, seq, type)                        -- 幂等去重 / 断网续传
+  UNIQUE (agent_id, seq)                              -- 幂等去重 / 断网续传(与契约 §1.4 一致，seq 每事件唯一)
 );
 CREATE INDEX IF NOT EXISTS ix_events_seat_ts ON events(exam_id, seat_id, ts);
 CREATE INDEX IF NOT EXISTS ix_events_risk    ON events(exam_id, risk);

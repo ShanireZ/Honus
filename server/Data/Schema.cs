@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using Microsoft.Data.Sqlite;
 
 namespace Honus.Server.Data;
@@ -27,8 +28,17 @@ public static class Schema
         cmd.ExecuteNonQuery();
     }
 
-    /// 按 ';' 切分语句。该 DDL 内无包含 ';' 的字符串字面量,故简单切分即可;
-    /// 每块保留内部换行与 '--' 行注释,SQLite 可直接执行。
+    /// 先剥离 '--' 行注释,再按 ';' 切分语句。
+    /// **必须先去注释**:否则注释里的分号(如 "与契约 §1.4 一致;seq")会劈裂 DDL 语句。
+    /// 该 DDL 无包含 '--' 或 ';' 的字符串字面量,故按行去注释 + 简单切分是安全的。
     private static IEnumerable<string> SplitStatements(string sql)
-        => sql.Split(';').Select(s => s.Trim()).Where(s => s.Length > 0);
+    {
+        var sb = new StringBuilder(sql.Length);
+        foreach (string line in sql.Split('\n'))
+        {
+            int c = line.IndexOf("--", StringComparison.Ordinal);
+            sb.Append(c >= 0 ? line[..c] : line).Append('\n');
+        }
+        return sb.ToString().Split(';').Select(s => s.Trim()).Where(s => s.Length > 0);
+    }
 }

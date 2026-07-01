@@ -18,6 +18,10 @@ public sealed record ServerConfig
     /// 预共享 HMAC 密钥(base64)。与 Agent 同一把。留空则**关闭验签**(仅本地联调,生产必须配)。
     public string? PskBase64 { get; init; }
 
+    /// 管理/看板令牌。所有 /api/* 请求需带 X-Honus-Admin 头(图片字节端点可用 ?t= 查询)。
+    /// 留空则关闭管理鉴权(仅本地联调)。防止学员机调 /api/exams/{id}/config 关掉全场检测。
+    public string? AdminToken { get; init; }
+
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。
     public int RiskThreshold { get; init; } = 50;
 
@@ -35,6 +39,9 @@ public sealed record ServerConfig
 
     [JsonIgnore]
     public bool AuthEnabled => Psk is not null;
+
+    [JsonIgnore]
+    public bool AdminAuthEnabled => !string.IsNullOrEmpty(AdminToken);
 
     private static readonly JsonSerializerOptions Opt = new()
     {

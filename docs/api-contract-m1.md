@@ -12,10 +12,11 @@
 - **编码**：所有 JSON 为 UTF-8、**camelCase** 字段名；枚举值为 **snake_case** 字符串。
 - **时间**：`ts` = Agent 本机时钟，Unix 秒（含小数，毫秒精度）；`recvTs` = 服务器接收时钟。考前 NTP 对齐。
 - **序号 `seq`**：每个 Agent 维护单调递增计数器，事件与图片**共用**同一序号空间。服务器按 `(agentId, seq)` 幂等去重，支持断网续传重发。
-- **鉴权 / 防篡改**：预共享密钥（PSK，每场考试或每 Agent 一把）。
+- **采集面鉴权 / 防篡改**：预共享密钥（PSK，每场考试或每 Agent 一把）。
   - 事件：每条带 `sig = HMAC-SHA256(PSK, hashSelf + "\n" + seq)`。
-  - 图片：HTTP 头带 `X-Honus-Sig = HMAC-SHA256(PSK, canonical(headers) + sha256(body))`。
+  - 图片：HTTP 头带 `X-Honus-Sig = HMAC-SHA256(PSK, canonical(headers) + sha256(body))`；`canonical(headers)` 顺序 = exam, seat, agent, seq, trigger, phash, ts, **imageId**（含 `X-Honus-Image-Id` 防其被篡改污染证据关联）。
   - 握手：WebSocket 连接时附 `X-Honus-Auth` 头（见 §1.1）。
+- **管理面鉴权**：所有 `/api/*`（看板读 + 管理写 + 图片字节）需带 `X-Honus-Admin: <管理令牌>` 头；图片字节端点（`<img>` 无法设头）额外接受 `?t=<令牌>` 查询。未配令牌则放行（仅联调）。**防止学员机调 `/api/exams/{id}/config` 下发白名单关掉全场检测、或拉取全班证据图、或抹除自己的可疑裁决。** 令牌与采集面 PSK 相互独立。
 
 ### 0.1 哈希链 canonical 规则（两端必须逐字节一致）
 `hashSelf = SHA256( hashPrev + "\n" + canonicalCore )`，其中 `canonicalCore` =
@@ -65,8 +66,8 @@ Header: X-Honus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
 ### 1.3 Server → Agent 帧
 | type | 含义 | 字段 |
 |---|---|---|
-| `hello_ack` | 握手确认 | `maxSeq`（服务器已收到的最大 seq，Agent 从 `maxSeq+1` 续传） |
-| `ack` | 批量确认 | `upto`（已持久化的最大 seq；Agent 可丢弃缓冲中 ≤upto 的） |
+| `hello_ack` | 握手确认 | `maxSeq`（服务器已收到的最大 seq，仅作安全网；Agent 的序号真相是本地持久化高水位） |
+| `ack` | **逐条确认** | `seq`（服务器已持久化的**该条** seq；Agent 精确删除缓冲中此 seq）。**不用范围 upto**——因事件/图片共用序号空间天然有空洞，范围压实会误删从未送达的低 seq 证据 |
 | `config_update` | 下发新配置 | `config`（白名单 / 阈值 / 截图参数，热更新） |
 | `capture_now` | 请求立即抓图 | `reason`（监考员手动点名抓图） |
 | `ping` / `pong` | 保活 | `ts` |
@@ -79,8 +80,9 @@ Header: X-Honus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
 > ```
 
 ### 1.4 可靠性
-- Agent 发送后本地暂存，收到 `ack.upto ≥ seq` 才删除。
-- 断网：事件落本地缓冲；重连 → `hello` → 依 `hello_ack.maxSeq` 从断点续传。
+- Agent **发送前先持久化到本地缓冲**（至少一次投递），收到 `ack.seq == 该条 seq` 才删除该条。
+- **序号单调不复用**：Agent 把序号高水位持久化到磁盘（`seq.state`，按块预留），进程重启后从高水位**之上**继续，杜绝与缓冲中未确认事件撞号被服务器幂等吞掉。
+- 断网：事件落本地缓冲；重连 → `hello` → 续传所有未确认事件（**先补图后发事件**，使证据图关联可命中）。
 - 服务器按 `(agentId, seq)` 唯一约束去重，重复帧静默忽略。
 
 ## 2. 图片通道（HTTP）

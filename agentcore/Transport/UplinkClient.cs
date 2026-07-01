@@ -23,6 +23,9 @@ public sealed class UplinkClient : IAsyncDisposable
 
     private volatile WebSocket? _ws;
     private long _seq;
+    private long _seqCeiling;                          // 已持久化的序号高水位
+    private readonly object _seqLock = new();
+    private const long SeqBlock = 256;                 // 每预留 256 个序号才落一次盘
 
     /// 监考员 capture_now → 触发一次抓图(Program 注入)。
     public Action<string>? OnCaptureNow;
@@ -39,9 +42,23 @@ public sealed class UplinkClient : IAsyncDisposable
         _wsConnect = wsConnect ?? DefaultConnectAsync;
         _wsUri = new Uri($"{cfg.ServerWsBase}/ingest/events?examId={cfg.ExamId}&seatId={cfg.SeatId}&agentId={cfg.AgentId}");
         _httpUri = new Uri($"{cfg.ServerHttpBase}/ingest/images");
+
+        // 序号从持久化高水位与缓冲最大 seq 之上继续,杜绝重启复用(否则新事件撞旧 seq 被服务器幂等吞掉)。
+        long start = Math.Max(buffer.LoadSeqCeiling(), buffer.MaxBufferedSeq());
+        _seq = start;
+        _seqCeiling = start;
+        if (start > 0) buffer.SaveSeqCeiling(start);
     }
 
-    public long NextSeq() => Interlocked.Increment(ref _seq);
+    /// 单调递增序号。跨事件与图片共用;每超过高水位就预留一个 block 并落盘,重启后从高水位之上继续。
+    public long NextSeq()
+    {
+        long s = Interlocked.Increment(ref _seq);
+        if (s > Volatile.Read(ref _seqCeiling))
+            lock (_seqLock)
+                if (s > _seqCeiling) { _seqCeiling = s + SeqBlock; _buffer.SaveSeqCeiling(_seqCeiling); }
+        return s;
+    }
 
     /// 默认 WS 连接:带 X-Honus-Auth 握手头的 ClientWebSocket。
     private async Task<WebSocket> DefaultConnectAsync(Uri uri, CancellationToken ct)
@@ -136,8 +153,8 @@ public sealed class UplinkClient : IAsyncDisposable
                     AlignSeq(maxSeq);                              // 跨重启对齐序号,避免复用
                 break;
             case "ack":
-                if (root.TryGetProperty("upto", out JsonElement up) && up.TryGetInt64(out long upto))
-                    _buffer.CompactEventsUpTo(upto);               // 已持久化 → 压实
+                if (root.TryGetProperty("seq", out JsonElement up) && up.TryGetInt64(out long ackedSeq))
+                    _buffer.RemoveEvent(ackedSeq);                 // 逐条精确删除已持久化的 seq
                 break;
             case "config_update":
                 if (root.TryGetProperty("config", out JsonElement cfgEl))
@@ -170,6 +187,7 @@ public sealed class UplinkClient : IAsyncDisposable
     /// baseline 抓图不预生成,由服务器分配 + pHash 去重。
     public async Task<string?> UploadImageAsync(byte[] webp, string trigger, ulong phash, long seq, CancellationToken ct)
     {
+        trigger = TriggerMap.ToContract(trigger);         // CaptureReason → 契约 trigger(否则落库脏值)
         string? clientId = trigger == "baseline_random" ? null : NewImageId();
         string? confirmed = await PostImageAsync(webp, trigger, phash, seq, clientId, ct).ConfigureAwait(false);
         if (confirmed is null)
@@ -190,7 +208,7 @@ public sealed class UplinkClient : IAsyncDisposable
         {
             string phashHex = phash.ToString("x16");
             string ts = Now().ToString(System.Globalization.CultureInfo.InvariantCulture);
-            string canon = Auth.ImageCanonicalHeaders(_cfg.ExamId, _cfg.SeatId, _cfg.AgentId, seq, trigger, phashHex, ts);
+            string canon = Auth.ImageCanonicalHeaders(_cfg.ExamId, _cfg.SeatId, _cfg.AgentId, seq, trigger, phashHex, ts, clientId ?? "");
             string sig = Auth.ImageSig(_cfg.Psk, canon, webp);
 
             using var content = new ByteArrayContent(webp);
@@ -225,6 +243,8 @@ public sealed class UplinkClient : IAsyncDisposable
         finally { _sendLock.Release(); }
     }
 
+    private const int MaxFrameBytes = 1 * 1024 * 1024;   // 单条下行消息上限 1MB
+
     private static async Task<string?> ReceiveTextAsync(WebSocket ws, CancellationToken ct)
     {
         var buf = new byte[16 * 1024];
@@ -236,6 +256,7 @@ public sealed class UplinkClient : IAsyncDisposable
             catch { return null; }
             if (r.MessageType == WebSocketMessageType.Close) return null;
             ms.Write(buf, 0, r.Count);
+            if (ms.Length > MaxFrameBytes) return null;   // 超限 → 断开
             if (r.EndOfMessage) break;
         }
         return Encoding.UTF8.GetString(ms.ToArray());
@@ -246,6 +267,8 @@ public sealed class UplinkClient : IAsyncDisposable
         long cur;
         do { cur = Interlocked.Read(ref _seq); if (maxSeq <= cur) return; }
         while (Interlocked.CompareExchange(ref _seq, maxSeq, cur) != cur);
+        lock (_seqLock)
+            if (maxSeq > _seqCeiling) { _seqCeiling = maxSeq + SeqBlock; _buffer.SaveSeqCeiling(_seqCeiling); }
     }
 
     private static double Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;

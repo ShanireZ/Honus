@@ -27,11 +27,12 @@ dotnet run -c Debug                                # 或运行已发布 exe
 | `urls` | Kestrel 绑定，如 `http://0.0.0.0:5199` |
 | `dataDir` | 数据根目录（SQLite 文件 + 截图原图都在此下） |
 | `dbPath` | SQLite 文件；`:memory:` 走内存（测试） |
-| `pskBase64` | 预共享 HMAC 密钥（base64），**与各 Agent 一致**。留空=关闭验签（仅联调） |
+| `pskBase64` | 采集面预共享 HMAC 密钥（base64），**与各 Agent 一致**。留空=关闭验签（仅联调） |
+| `adminToken` | 管理/看板令牌。`/api/*` 需带 `X-Honus-Admin` 头（图片字节可用 `?t=`）。留空=关闭管理鉴权（仅联调）。**生产必配**，防学员机下发配置关检测/拉证据图/抹裁决 |
 | `riskThreshold` | 事件 risk ≥ 此值入可疑队列（默认 50） |
 | `onlineWindowSeconds` / `recentRiskWindowSeconds` | 座位在线判定 / 热力风险统计窗口 |
 
-环境变量可覆盖配置（便于测试/部署）：`HONUS_CONFIG` `HONUS_DATADIR` `HONUS_DBPATH` `HONUS_PSK_B64` `HONUS_URLS`。
+环境变量可覆盖配置（便于测试/部署）：`HONUS_CONFIG` `HONUS_DATADIR` `HONUS_DBPATH` `HONUS_PSK_B64` `HONUS_ADMIN_TOKEN` `HONUS_URLS`。
 
 ## 端点
 **采集端（Agent ↔ Server）**

@@ -6,7 +6,9 @@ namespace Honus.Server.Ingest;
 /// WebSocket 文本帧收发小工具。一条 JSON 一帧。
 public static class WsUtil
 {
-    /// 接收一整条文本消息(拼接分片)。返回 null 表示对端关闭。
+    private const int MaxFrameBytes = 1 * 1024 * 1024;   // 单条消息上限 1MB,防无界帧内存耗尽
+
+    /// 接收一整条文本消息(拼接分片)。返回 null 表示对端关闭或超限。
     public static async Task<string?> ReceiveTextAsync(WebSocket ws, CancellationToken ct)
     {
         var buf = new byte[16 * 1024];
@@ -20,6 +22,7 @@ public static class WsUtil
 
             if (r.MessageType == WebSocketMessageType.Close) return null;
             ms.Write(buf, 0, r.Count);
+            if (ms.Length > MaxFrameBytes) return null;   // 超限 → 断开
             if (r.EndOfMessage) break;
         }
         return Encoding.UTF8.GetString(ms.ToArray());

@@ -62,9 +62,10 @@ public static class Auth
         return Crypto.HmacHex(psk, canonicalHeaders + "\n" + bodyHash);
     }
 
-    /// 图片上传的规范化头串(两端必须一致)。顺序: exam, seat, agent, seq, trigger, phash, ts。
+    /// 图片上传的规范化头串(两端必须一致)。顺序: exam, seat, agent, seq, trigger, phash, ts, imageId。
+    /// imageId = 客户端预生成 id(无则传 "");纳入签名防止 X-Honus-Image-Id 被篡改污染证据关联。
     public static string ImageCanonicalHeaders(
-        string examId, string seatId, string agentId, long seq, string trigger, string phash, string ts)
+        string examId, string seatId, string agentId, long seq, string trigger, string phash, string ts, string imageId = "")
         => string.Join("\n", new[]
         {
             "exam:" + examId,
@@ -74,6 +75,7 @@ public static class Auth
             "trigger:" + trigger,
             "phash:" + phash,
             "ts:" + ts,
+            "imageId:" + imageId,
         });
 }
 

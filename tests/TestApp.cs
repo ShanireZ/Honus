@@ -16,16 +16,18 @@ public sealed class TestApp : WebApplicationFactory<Program>
 {
     public static readonly byte[] Psk = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
     public static readonly string PskB64 = Convert.ToBase64String(Psk);
+    public const string AdminToken = "test-admin-token-xyz";
 
     private readonly string _dataDir;
 
-    public TestApp()
+    public TestApp(bool adminAuth = false)
     {
         _dataDir = Path.Combine(Path.GetTempPath(), "honus-test-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(_dataDir);
         Environment.SetEnvironmentVariable("HONUS_DBPATH", ":memory:");
         Environment.SetEnvironmentVariable("HONUS_DATADIR", _dataDir);
         Environment.SetEnvironmentVariable("HONUS_PSK_B64", PskB64);
+        Environment.SetEnvironmentVariable("HONUS_ADMIN_TOKEN", adminAuth ? AdminToken : null);  // null 清除 → 默认管理鉴权关
     }
 
     /// 连接事件 WS,附带合法握手头。
