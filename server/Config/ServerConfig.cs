@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 
 namespace Honus.Server.Config;
 
-/// 服务器配置(从 server.config.json 加载,camelCase)。
-public sealed class ServerConfig
+/// 服务器配置(从 server.config.json 加载,camelCase)。record 便于用 with 施加环境变量覆盖。
+public sealed record ServerConfig
 {
     /// Kestrel 绑定地址(可多个,逗号分隔),如 "http://0.0.0.0:5199"。
     public string Urls { get; init; } = "http://0.0.0.0:5199";

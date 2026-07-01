@@ -3,6 +3,11 @@
    纯原生 CSS，无外部字体/CDN。信息密集，等宽用于技术字段。
    ============================================================ */
 
+/* hidden 属性必须压过组件自身的 display（如 .lightbox{display:flex}），
+   否则灯箱/抽屉遮罩等会在初始 hidden 下仍然显示。作者样式默认胜过 UA 的
+   [hidden]{display:none}，故此处显式兜底。 */
+[hidden] { display: none !important; }
+
 :root {
   /* 底色层 */
   --bg-0: #0b0e14;          /* 页面最底 */

@@ -64,6 +64,15 @@ public sealed class EventIngest(Db db, ServerConfig cfg, ILogger<EventIngest> lo
                 catch (Exception ex) { log.LogError(ex, "处理帧异常 type={Type}", frameType); }
             }
         }
+
+        // 完成关闭握手(对端主动关闭时回一帧 Close),避免客户端 WS 报异常关闭。
+        try
+        {
+            if (ws.State is WebSocketState.CloseReceived)
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None);
+        }
+        catch { /* 连接已断,忽略 */ }
+
         log.LogInformation("Agent 断开 seat={Seat} agent={Agent}", seatId, agentId);
     }
 

@@ -9,9 +9,11 @@
 所有文档、注释、提交信息一律用中文。
 
 ## 组件与技术栈
-- **采集端 Agent**（考试机，每台一个）：C#/.NET 单文件 exe，需管理员权限（ETW / UIAutomation / WMI）。代码骨架 [agent/](agent/)。
-- **监考服务器**（笔记本）：接收 + 分析 + 落库 + Web 看板；SQLite + 文件系统 + sqlite-vec。**仅服务器对外联网，且只为云 OCR**。
-- **监考端 / 复核台**：实时看板 + 可疑队列复核。
+- **共享契约** [contracts/](contracts/)（`Honus.Contracts`，net8.0）：线协议 / canonical / HMAC / 枚举 / 事件模型。Agent 与 Server **共用同一实现**，保证哈希链与签名两端逐字节一致。
+- **采集端 Agent**（考试机，每台一个）：C#/.NET 单文件 exe，需管理员权限（ETW / UIAutomation / WMI）。代码 [agent/](agent/)（`Honus.Agent`，net8.0-windows）。
+- **监考服务器**（笔记本）：接收 + 分析 + 落库 + Web 看板。**.NET 8 / ASP.NET Core**（minimal API + WebSocket）+ **Microsoft.Data.Sqlite** + 文件系统（+ M3 起 sqlite-vec）。代码 [server/](server/)（`Honus.Server`，net8.0）。**仅服务器对外联网，且只为云 OCR**。
+- **监考端 / 复核台**：实时看板 + 可疑队列复核。纯原生单页看板在 [server/wwwroot/](server/wwwroot/)。
+- **测试**：[tests/](tests/)（`Honus.Server.Tests`，xUnit）——端到端覆盖 WS 握手/验签/幂等、图片去重、击键、人工裁决、canonical 黄金格式。
 
 ## 设计铁律（任何改动都必须守）
 1. **预防层为零，检测必须扎实** — 控不了考场网络、也不做主机防火墙，联网搜题 / 网页 AI 只能靠 URL / 进程 / 截图**检测取证**（事后），不可阻断。**浏览器 URL 监控是第一防线**。
@@ -31,10 +33,23 @@
 - [docs/api-contract-m1.md](docs/api-contract-m1.md) — M1 接口契约（Agent↔Server 协议 + 数据模型）
 - [schema/schema.sql](schema/schema.sql) — SQLite **live** DB DDL
 - [schema/schema-archive.sql](schema/schema-archive.sql) — SQLite **archive** DB DDL
-- [agent/](agent/) — C#/.NET 采集端骨架（`Honus.Agent`）
+- [contracts/](contracts/) — 共享线协议库（`Honus.Contracts`）
+- [agent/](agent/) — C#/.NET 采集端（`Honus.Agent`）
+- [server/](server/) — 监考服务器 + 看板（`Honus.Server`，见 [server/README.md](server/README.md)）
+- [tests/](tests/) — 端到端测试（`Honus.Server.Tests`）
+- [Honus.sln](Honus.sln) — 解决方案（4 个项目）
+
+## 构建 / 测试（需 .NET 8 SDK，无需 VS）
+```
+dotnet build Honus.sln -c Debug      # 全量编译(Agent 走 net8.0-windows)
+dotnet test  Honus.sln -c Debug      # 运行端到端测试
+```
 
 ## 状态
-M1（最小闭环）设计完成，进入实现。里程碑见 architecture §15。
+**M1 最小闭环已实现并通过端到端验证**：
+- ✅ `Honus.Contracts` 共享库 + `Honus.Agent`（首次编译通过·0 警告）+ `Honus.Server`（WS/HTTP ingest + 落库 + 看板）+ 10 项测试全绿。
+- ✅ 真机跑通：Agent 事件/图片 → 服务器落库/去重/入可疑队列 → 看板热力/复核/证据图。
+- ⏳ 待办：Agent 端断网续传（`UplinkClient` TODO：握手/接收循环/重连续传）、`LocalBuffer.ReplayAsync`；M2 云 OCR + L3 Logo + 风险评分；M3 CLIP/哈希链验证/归档作业。里程碑见 architecture §15。
 
 ## 提交约定
 默认不提交，除非用户明确要求。commit 信息用中文，简洁。

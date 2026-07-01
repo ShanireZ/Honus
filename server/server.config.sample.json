@@ -1,0 +1,16 @@
+{
+  // 监考服务器配置样例。复制为 server.config.json 后按现场调整。
+  "urls": "http://0.0.0.0:5199",
+  "dataDir": "./data",
+  "dbPath": "honus.db",
+
+  // 预共享 HMAC 密钥(base64),必须与各 Agent 的 psk 一致。
+  // 留空 = 关闭验签(仅本机联调用;生产务必配置)。
+  // 生成示例(PowerShell): [Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))
+  "pskBase64": "",
+
+  "riskThreshold": 50,
+  "dedupImagesByPhash": true,
+  "onlineWindowSeconds": 90,
+  "recentRiskWindowSeconds": 300
+}
