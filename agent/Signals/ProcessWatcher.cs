@@ -1,4 +1,5 @@
 using System.Management;
+using Honus.Agent.Config;
 using Honus.Agent.Model;
 using Honus.Contracts;
 
@@ -12,11 +13,10 @@ public sealed class ProcessWatcher : ISignalSource
     public string Name => "process-watcher";
     public event Action<RawSignal>? Signal;
 
-    private readonly HashSet<string> _whitelist;
+    private readonly LiveConfig _live;                 // 进程白名单可热更新
     private ManagementEventWatcher? _start, _stop;
 
-    public ProcessWatcher(IEnumerable<string> whitelistProcs)
-        => _whitelist = new(whitelistProcs.Select(p => p.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
+    public ProcessWatcher(LiveConfig live) => _live = live;
 
     public void Start()
     {
@@ -39,7 +39,7 @@ public sealed class ProcessWatcher : ISignalSource
         var p = (ManagementBaseObject)e.NewEvent["TargetInstance"];
         string name = ((string?)p["Name"] ?? "").ToLowerInvariant();
         string nameNoExt = name.EndsWith(".exe") ? name[..^4] : name;
-        bool allowed = _whitelist.Contains(nameNoExt);
+        bool allowed = _live.IsWhitelistedProc(nameNoExt);
 
         Signal?.Invoke(new RawSignal(SignalType.ProcessStart,
             new()

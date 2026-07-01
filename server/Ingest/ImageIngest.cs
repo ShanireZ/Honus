@@ -52,24 +52,46 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
             }
         }
 
-        // pHash 去重(同座位相同 phash 视为近重复,不另存原图)
-        if (cfg.DedupImagesByPhash && !string.IsNullOrEmpty(phash))
+        // 客户端预生成 imageId(触发型抓图):幂等沿用,以保证"事件 ↔ 证据图"关联跨断线不断。
+        string clientId = req.Headers["X-Honus-Image-Id"].ToString();
+        bool hasClientId = IsValidImageId(clientId);
+
+        string imageId;
+        if (hasClientId)
         {
-            string? dupId = db.Locked(conn =>
+            bool exists = db.Locked(conn =>
             {
-                using SqliteCommand c = conn.Cmd(
-                    "SELECT image_id FROM images WHERE exam_id=@e AND seat_id=@s AND phash=@p LIMIT 1",
-                    ("@e", examId), ("@s", seatId), ("@p", phash));
-                return c.ExecuteScalar() as string;
+                using SqliteCommand c = conn.Cmd("SELECT 1 FROM images WHERE image_id=@id LIMIT 1", ("@id", clientId));
+                return c.ExecuteScalar() is not null;
             });
-            if (dupId is not null)
+            if (exists)   // 重传(续传)→ 幂等,不另存
             {
-                await ctx.Response.WriteAsJsonAsync(new { stored = false, imageId = dupId, duplicate = true, ocrQueued = false });
+                await ctx.Response.WriteAsJsonAsync(new { stored = false, imageId = clientId, duplicate = true, ocrQueued = false });
                 return;
             }
+            imageId = clientId;   // 沿用客户端 id;**跳过 pHash 去重**以尊重事件关联
+        }
+        else
+        {
+            // 无客户端 id(如 baseline):pHash 去重 + 服务器分配
+            if (cfg.DedupImagesByPhash && !string.IsNullOrEmpty(phash))
+            {
+                string? dupId = db.Locked(conn =>
+                {
+                    using SqliteCommand c = conn.Cmd(
+                        "SELECT image_id FROM images WHERE exam_id=@e AND seat_id=@s AND phash=@p LIMIT 1",
+                        ("@e", examId), ("@s", seatId), ("@p", phash));
+                    return c.ExecuteScalar() as string;
+                });
+                if (dupId is not null)
+                {
+                    await ctx.Response.WriteAsJsonAsync(new { stored = false, imageId = dupId, duplicate = true, ocrQueued = false });
+                    return;
+                }
+            }
+            imageId = "img_" + Guid.NewGuid().ToString("N");
         }
 
-        string imageId = "img_" + Guid.NewGuid().ToString("N");
         string relPath = await storage.SaveWebpAsync(examId, seatId, imageId, body);
         double recvTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
@@ -77,7 +99,8 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
         {
             using SqliteCommand c = conn.Cmd(
                 @"INSERT INTO images (image_id,exam_id,seat_id,agent_id,ts,recv_ts,trigger,phash,file_path,format,bytes,uploaded_to_ocr,is_evidence)
-                  VALUES (@id,@e,@s,@a,@ts,@recv,@trig,@ph,@fp,'webp',@bytes,0,0)",
+                  VALUES (@id,@e,@s,@a,@ts,@recv,@trig,@ph,@fp,'webp',@bytes,0,0)
+                  ON CONFLICT(image_id) DO NOTHING",
                 ("@id", imageId), ("@e", examId), ("@s", seatId), ("@a", agentId),
                 ("@ts", ts), ("@recv", recvTs), ("@trig", trigger), ("@ph", phash),
                 ("@fp", relPath), ("@bytes", (long)body.Length));
@@ -85,5 +108,14 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
         });
 
         await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued = false });
+    }
+
+    /// 客户端 id 格式校验(防路径注入):img_ + 至多 64 位字母数字。
+    private static bool IsValidImageId(string? id)
+    {
+        if (id is null || id.Length is < 5 or > 68 || !id.StartsWith("img_", StringComparison.Ordinal)) return false;
+        for (int i = 4; i < id.Length; i++)
+            if (!char.IsLetterOrDigit(id[i])) return false;
+        return true;
     }
 }

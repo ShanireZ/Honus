@@ -43,6 +43,7 @@ dotnet run -c Debug                                # 或运行已发布 exe
 - `GET  /api/exams` · `/api/exams/{examId}/seats` · `/{examId}/suspicious?status=` · `/{examId}/events?seatId=&limit=`
 - `GET  /api/images/{imageId}`（webp 字节）· `/api/images/{imageId}/meta`
 - `POST /api/exams`（建考试+座位）· `/api/exams/{examId}/end` · `/api/suspicious/{id}/decide`（人工裁决）
+- `POST /api/exams/{examId}/config` — 下发**配置热更新**给该考试在线 Agent（白名单/阈值/截图参数），返回 `pushedTo`；新连/重连 Agent 在 hello 时补推。
 
 ## M1 边界（见 architecture §15）
 - **已实现**：ingest 落库 / 幂等去重 / 图片存盘去重 / HMAC 验签 / 可疑队列 / 看板 + 人工裁决。

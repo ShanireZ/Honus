@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Honus.Server.Config;
 using Honus.Server.Data;
+using Honus.Server.Ingest;
 using Microsoft.Data.Sqlite;
 
 namespace Honus.Server.Api;
@@ -17,6 +18,7 @@ public static class Endpoints
         Db db = app.Services.GetRequiredService<Db>();
         Storage storage = app.Services.GetRequiredService<Storage>();
         ServerConfig cfg = app.Services.GetRequiredService<ServerConfig>();
+        AgentHub hub = app.Services.GetRequiredService<AgentHub>();
 
         // ---- 考试列表 ----
         app.MapGet("/api/exams", () =>
@@ -253,6 +255,15 @@ public static class Endpoints
                 return c.ExecuteNonQuery();
             });
             return changed > 0 ? Results.Json(new { ok = true, examId, status = "ended" }) : Results.NotFound();
+        });
+
+        // 下发配置热更新:存最新配置并推送给该考试所有在线 Agent(新连/重连 Agent 在 hello 时也会收到)
+        app.MapPost("/api/exams/{examId}/config", async (string examId, HttpContext ctx) =>
+        {
+            JsonNode? body = await JsonNode.ParseAsync(ctx.Request.Body);
+            if (body is not JsonObject) return Results.BadRequest(new { error = "config 必须是对象" });
+            int pushedTo = await hub.PushConfigAsync(examId, body.ToJsonString(), ctx.RequestAborted);
+            return Results.Json(new { ok = true, examId, pushedTo });
         });
 
         // 可疑裁决(人工)

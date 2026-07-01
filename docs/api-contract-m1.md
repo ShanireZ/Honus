@@ -71,6 +71,13 @@ Header: X-Honus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
 | `capture_now` | 请求立即抓图 | `reason`（监考员手动点名抓图） |
 | `ping` / `pong` | 保活 | `ts` |
 
+> **config_update（热更新）**：监考端调 `POST /api/exams/{examId}/config`（body = 下列 camelCase 配置对象），服务器缓存并推送 `config_update` 给该考试所有在线 Agent；新连 / 重连 Agent 在 `hello` 后也会补推一次。Agent 收到即原子应用（`LiveConfig`），**下一轮采集生效**。可热更字段（仅出现的才更新）：
+> ```jsonc
+> { "whitelistHosts":["judge.exam.cn"], "whitelistProcs":["code"],
+>   "largePasteThreshold":200, "targetHeight":1080, "webpQuality":75,
+>   "baselineMinSeconds":30, "baselineMaxSeconds":90 }
+> ```
+
 ### 1.4 可靠性
 - Agent 发送后本地暂存，收到 `ack.upto ≥ seq` 才删除。
 - 断网：事件落本地缓冲；重连 → `hello` → 依 `hello_ack.maxSeq` 从断点续传。
@@ -90,14 +97,16 @@ X-Honus-Trigger: event:browser        // event:browser | event:paste | event:pro
 X-Honus-Phash:   9f3c1a22b0e4d7f1     // dHash 64bit, 16 hex
 X-Honus-Ts:      1750000000.456
 X-Honus-Sig:     <hex hmac>
+X-Honus-Image-Id: img_8f1c…           // 可选:客户端预生成 id(触发型抓图),服务器沿用
 <body = WebP 字节>
 ```
 **响应 200**：
 ```jsonc
 { "stored": true, "imageId": "img_8f1c…", "duplicate": false, "ocrQueued": true }
 ```
-- `imageId`：服务器分配（uuid）。触发型抓图的 Agent 会把它写进**随后**那条事件的 `evidenceImageId`。
-- `duplicate: true`：服务器侧 pHash 命中近重复，未另存原图（仍返回已存的 imageId）。
+- `imageId`：默认服务器分配（uuid）。**若请求带合法 `X-Honus-Image-Id`（`img_` + ≤64 位字母数字），服务器沿用该 id**——用于**触发型抓图**：Agent 预生成 id，既写进随后那条事件的 `evidenceImageId`，又作为图片 id 上传；即使离线缓冲、断线重连后补传，事件与证据图仍以同一 id 关联不断。带客户端 id 的上传**跳过 pHash 去重**（尊重事件关联）；同 id 重传幂等（`duplicate:true`，不另存）。
+- `duplicate: true`：pHash 命中近重复（无客户端 id 时），或客户端 id 已存在（续传重发）；未另存原图，返回已存 imageId。
+- 未带 `X-Honus-Image-Id` 的（如随机基线抓图）走服务器分配 + pHash 去重。
 - 原图按 `images/<examId>/<seatId>/<imageId>.webp` 存文件系统；DB 只存指针（见 §4 `images`）。
 
 ### 2.2 击键节奏上报（判题网页前端 → 服务器，旁路）

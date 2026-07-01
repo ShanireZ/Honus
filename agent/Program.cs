@@ -26,12 +26,21 @@ internal static class Program
         var uplink = new UplinkClient(cfg, buffer);
         var chain = new HashChain(cfg.Psk);
         var sealLock = new object();
+        var live = new LiveConfig(cfg);   // 可热更新配置(白名单/阈值/截图参数),各源每轮读取
 
         // 上传委托:WebP → imageId(自带 seq)
         async Task<string?> Upload(byte[] webp, string trigger, ulong phash)
             => await uplink.UploadImageAsync(webp, trigger, phash, uplink.NextSeq(), cts.Token);
 
-        var capturer = new ScreenshotCapturer(cfg.TargetHeight, cfg.WebpQuality, Upload);
+        var capturer = new ScreenshotCapturer(live, Upload);
+
+        // 监考员 capture_now → 立即抓一张;config_update → 热更新 LiveConfig(下一轮采集即生效)
+        uplink.OnCaptureNow = reason => _ = capturer.CaptureAsync(reason, dedupAgainstLast: false);
+        uplink.OnConfigUpdate = json =>
+        {
+            live.Apply(json);
+            Console.WriteLine("[honus-agent] 已应用 config_update 热更新");
+        };
 
         // 事件管线:RawSignal →(必要时抓图)→ 盖章(ts/seq/hash)→ 发送
         async void Handle(RawSignal raw)
@@ -68,21 +77,22 @@ internal static class Program
         var sources = new List<ISignalSource>
         {
             new ForegroundWindowSource(),
-            new BrowserUrlSource(cfg.WhitelistHosts),
-            new ProcessWatcher(cfg.WhitelistProcs),
-            new ClipboardWatcher(cfg.LargePasteThreshold),
+            new BrowserUrlSource(live),
+            new ProcessWatcher(live),
+            new ClipboardWatcher(live),
             new UsbWatcher(),
         };
         foreach (ISignalSource s in sources) s.Signal += Handle;
 
-        uplink.ConnectAsync(cts.Token).GetAwaiter().GetResult();
+        // 连接管理(握手/hello/续传/断线重连)在后台常驻,直到 cts 取消
+        _ = Task.Run(() => uplink.RunAsync(cts.Token));
         foreach (ISignalSource s in sources)
         {
             try { s.Start(); }
             catch (Exception ex) { Console.Error.WriteLine($"[honus-agent] 启动 {s.Name} 失败: {ex.Message}"); }
         }
 
-        _ = Task.Run(() => BaselineLoop(cfg, capturer, cts.Token));
+        _ = Task.Run(() => BaselineLoop(live, capturer, cts.Token));
         _ = Task.Run(() => HeartbeatLoop(Handle, cts.Token));
 
         Console.WriteLine($"[honus-agent] 运行中 seat={cfg.SeatId} exam={cfg.ExamId}。Ctrl+C 退出。");
@@ -93,13 +103,13 @@ internal static class Program
         return 0;
     }
 
-    /// 随机基线抓图(30–90s,不去重——每张都可能是抓 IDE 插件的孤证)。
-    private static async Task BaselineLoop(AgentConfig cfg, ScreenshotCapturer cap, CancellationToken ct)
+    /// 随机基线抓图(30–90s,不去重——每张都可能是抓 IDE 插件的孤证)。区间可热更新。
+    private static async Task BaselineLoop(LiveConfig live, ScreenshotCapturer cap, CancellationToken ct)
     {
         var rng = new Random();
         while (!ct.IsCancellationRequested)
         {
-            int wait = rng.Next(cfg.BaselineMinSeconds, cfg.BaselineMaxSeconds + 1);
+            int wait = rng.Next(live.BaselineMinSeconds, live.BaselineMaxSeconds + 1);
             try { await Task.Delay(TimeSpan.FromSeconds(wait), ct); }
             catch (TaskCanceledException) { break; }
             try { await cap.CaptureAsync("baseline_random", dedupAgainstLast: false); }

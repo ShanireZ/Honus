@@ -28,6 +28,7 @@ builder.WebHost.UseUrls(cfg.Urls.Split(',', StringSplitOptions.RemoveEmptyEntrie
 builder.Services.AddSingleton(cfg);
 builder.Services.AddSingleton(new Db(dataSource));
 builder.Services.AddSingleton(new Storage(dataDir));
+builder.Services.AddSingleton<AgentHub>();          // 在线 Agent 注册表(config_update 下推)
 builder.Services.AddSingleton<EventIngest>();
 builder.Services.AddSingleton<ImageIngest>();
 builder.Services.AddSingleton<KeystrokeIngest>();

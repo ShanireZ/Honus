@@ -19,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\server\Honus.Server.csproj" />
     <ProjectReference Include="..\contracts\Honus.Contracts.csproj" />
+    <ProjectReference Include="..\agentcore\Honus.Agent.Core.csproj" />
   </ItemGroup>
 
 </Project>

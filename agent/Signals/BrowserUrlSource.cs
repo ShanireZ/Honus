@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
+using Honus.Agent.Config;
 using Honus.Agent.Model;
 using Honus.Contracts;
 
@@ -17,14 +18,14 @@ public sealed class BrowserUrlSource : ISignalSource
 
     private static readonly string[] BrowserProcs = { "chrome", "msedge", "firefox", "brave", "opera" };
 
-    private readonly HashSet<string> _whitelistHosts;
+    private readonly LiveConfig _live;                 // 白名单可热更新
     private readonly TimeSpan _interval;
     private readonly System.Threading.Timer _timer;   // 显式限定:UseWindowsForms 注入了 Forms.Timer 造成歧义
     private string _lastUrl = "";
 
-    public BrowserUrlSource(IEnumerable<string> whitelistHosts, TimeSpan? interval = null)
+    public BrowserUrlSource(LiveConfig live, TimeSpan? interval = null)
     {
-        _whitelistHosts = new(whitelistHosts, StringComparer.OrdinalIgnoreCase);
+        _live = live;
         _interval = interval ?? TimeSpan.FromSeconds(2);
         _timer = new System.Threading.Timer(_ => Poll(), null, Timeout.Infinite, Timeout.Infinite);
     }
@@ -67,7 +68,7 @@ public sealed class BrowserUrlSource : ISignalSource
 
     private bool IsWhitelisted(string url)
     {
-        try { return _whitelistHosts.Contains(new Uri(url).Host); }
+        try { return _live.IsWhitelistedHost(new Uri(url).Host); }
         catch { return false; }
     }
 

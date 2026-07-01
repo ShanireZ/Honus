@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using Honus.Agent.Config;
 using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.Processing;
 using IsImage = SixLabors.ImageSharp.Image;
@@ -10,8 +11,7 @@ namespace Honus.Agent.Capture;
 /// 抓图串行化(SemaphoreSlim),避免并发触发时 _lastPhash 竞争。
 public sealed class ScreenshotCapturer : IDisposable
 {
-    private readonly int _targetHeight;
-    private readonly int _webpQuality;
+    private readonly LiveConfig _live;                                     // 目标高度 / WebP 质量可热更新
     private readonly Func<byte[], string, ulong, Task<string?>> _upload;   // (webp, trigger, phash) => imageId
     private readonly SemaphoreSlim _sem = new(1, 1);
     private readonly TimeSpan _minGap = TimeSpan.FromMilliseconds(1500);   // 触发型连发去抖
@@ -19,11 +19,9 @@ public sealed class ScreenshotCapturer : IDisposable
     private ulong _lastPhash;
     private bool _hasLast;
 
-    public ScreenshotCapturer(int targetHeight, int webpQuality,
-        Func<byte[], string, ulong, Task<string?>> upload)
+    public ScreenshotCapturer(LiveConfig live, Func<byte[], string, ulong, Task<string?>> upload)
     {
-        _targetHeight = targetHeight;
-        _webpQuality = webpQuality;
+        _live = live;
         _upload = upload;
     }
 
@@ -41,13 +39,13 @@ public sealed class ScreenshotCapturer : IDisposable
             using (Bitmap bmp = GrabPrimaryScreen())
             using (IsImage img = ToImageSharp(bmp))
             {
-                Downscale(img, _targetHeight);
+                Downscale(img, _live.TargetHeight);
                 phash = PerceptualHash.DHash(img);
                 if (dedupAgainstLast && _hasLast && PerceptualHash.Hamming(phash, _lastPhash) <= 3)
                     return null;                                  // 与上一张几乎一致,丢弃
                 _lastPhash = phash;
                 _hasLast = true;
-                webp = EncodeWebp(img, _webpQuality);
+                webp = EncodeWebp(img, _live.WebpQuality);
             }
             return await _upload(webp, trigger, phash).ConfigureAwait(false);
         }

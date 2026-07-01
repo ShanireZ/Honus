@@ -207,9 +207,33 @@ public class IngestTests
         Assert.True(seats1[0].GetProperty("online").GetBoolean());
     }
 
+    [Fact]
+    public async Task 图片_客户端预生成id_幂等沿用()
+    {
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+
+        byte[] webp = Encoding.ASCII.GetBytes("RIFF-webp-client-id-test");
+        string cid = "img_" + Guid.NewGuid().ToString("N");
+
+        // 带客户端 id 上传 → 服务器沿用该 id
+        string id1 = await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 5, "event:browser",
+            "aabbccddeeff0011", "1750000000.100", expectDuplicate: false, clientId: cid);
+        Assert.Equal(cid, id1);
+
+        // 同 id 重传(续传)→ 幂等,不另存
+        string id2 = await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 6, "event:browser",
+            "aabbccddeeff0011", "1750000000.200", expectDuplicate: true, clientId: cid);
+        Assert.Equal(cid, id2);
+
+        HttpResponseMessage img = await http.GetAsync($"/api/images/{cid}");
+        Assert.Equal(HttpStatusCode.OK, img.StatusCode);
+    }
+
     // ---- 图片上传小工具 ----
     private static async Task<string> UploadImageAsync(HttpClient http, byte[] webp,
-        string exam, string seat, string agent, long seq, string trigger, string phash, string ts, bool expectDuplicate)
+        string exam, string seat, string agent, long seq, string trigger, string phash, string ts,
+        bool expectDuplicate, string? clientId = null)
     {
         string canon = Auth.ImageCanonicalHeaders(exam, seat, agent, seq, trigger, phash, ts);
         string sig = Auth.ImageSig(TestApp.Psk, canon, webp);
@@ -225,6 +249,7 @@ public class IngestTests
         req.Headers.Add("X-Honus-Phash", phash);
         req.Headers.Add("X-Honus-Ts", ts);
         req.Headers.Add("X-Honus-Sig", sig);
+        if (clientId is not null) req.Headers.Add("X-Honus-Image-Id", clientId);
 
         HttpResponseMessage resp = await http.SendAsync(req);
         resp.EnsureSuccessStatusCode();

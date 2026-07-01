@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Honus.Agent.Config;
 using Honus.Agent.Model;
 using Honus.Contracts;
 
@@ -14,11 +15,11 @@ public sealed class ClipboardWatcher : ISignalSource
     public event Action<RawSignal>? Signal;
 
     private const int WM_CLIPBOARDUPDATE = 0x031D;
-    private readonly int _largePasteThreshold;
+    private readonly LiveConfig _live;                 // 大段粘贴阈值可热更新
     private Thread? _thread;
     private MsgWindow? _win;
 
-    public ClipboardWatcher(int largePasteThreshold = 200) => _largePasteThreshold = largePasteThreshold;
+    public ClipboardWatcher(LiveConfig live) => _live = live;
 
     public void Start()
     {
@@ -41,7 +42,7 @@ public sealed class ClipboardWatcher : ISignalSource
             string text = Clipboard.GetText();
             int len = text.Length;
             int lines = text.Count(c => c == '\n') + 1;
-            bool large = len >= _largePasteThreshold || lines >= 5;
+            bool large = len >= _live.LargePasteThreshold || lines >= 5;
 
             Signal?.Invoke(new RawSignal(SignalType.Clipboard,
                 new() { ["len"] = len, ["lines"] = lines, ["large"] = large },  // 不含明文

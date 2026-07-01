@@ -10,7 +10,7 @@ namespace Honus.Server.Ingest;
 
 /// 事件通道(WebSocket /ingest/events)。见 api-contract §1。
 /// 握手校验 X-Honus-Auth;每事件校验 sig;幂等落库(agent_id,seq,type);risk≥阈值入可疑队列。
-public sealed class EventIngest(Db db, ServerConfig cfg, ILogger<EventIngest> log)
+public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<EventIngest> log)
 {
     public async Task HandleAsync(HttpContext ctx)
     {
@@ -35,35 +35,40 @@ public sealed class EventIngest(Db db, ServerConfig cfg, ILogger<EventIngest> lo
 
         using WebSocket ws = await ctx.WebSockets.AcceptWebSocketAsync();
         CancellationToken ct = ctx.RequestAborted;
+        AgentHub.Conn conn = hub.Register(agentId, examId, ws);   // 登记在线连接(供 config_update 下推)
         log.LogInformation("Agent 连接 exam={Exam} seat={Seat} agent={Agent}", examId, seatId, agentId);
 
-        while (ws.State == WebSocketState.Open)
+        try
         {
-            string? msg = await WsUtil.ReceiveTextAsync(ws, ct);
-            if (msg is null) break;
-
-            JsonDocument doc;
-            try { doc = JsonDocument.Parse(msg); }
-            catch { continue; }   // 非法 JSON,忽略
-
-            using (doc)
+            while (ws.State == WebSocketState.Open)
             {
-                JsonElement root = doc.RootElement;
-                string frameType = Str(root, "type") ?? "";
-                try
+                string? msg = await WsUtil.ReceiveTextAsync(ws, ct);
+                if (msg is null) break;
+
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(msg); }
+                catch { continue; }   // 非法 JSON,忽略
+
+                using (doc)
                 {
-                    switch (frameType)
+                    JsonElement root = doc.RootElement;
+                    string frameType = Str(root, "type") ?? "";
+                    try
                     {
-                        case "hello":    await OnHelloAsync(ws, agentId, ct); break;
-                        case "event":    await OnEventAsync(ws, root, ct); break;
-                        case "ping":     await WsUtil.SendTextAsync(ws, "{\"v\":1,\"type\":\"pong\"}", ct); break;
-                        case "pong":     break;
-                        default:         break;
+                        switch (frameType)
+                        {
+                            case "hello":    await OnHelloAsync(conn, agentId, ct); break;
+                            case "event":    await OnEventAsync(conn, root, ct); break;
+                            case "ping":     await conn.SendAsync("{\"v\":1,\"type\":\"pong\"}", ct); break;
+                            case "pong":     break;
+                            default:         break;
+                        }
                     }
+                    catch (Exception ex) { log.LogError(ex, "处理帧异常 type={Type}", frameType); }
                 }
-                catch (Exception ex) { log.LogError(ex, "处理帧异常 type={Type}", frameType); }
             }
         }
+        finally { hub.Unregister(agentId, conn); }
 
         // 完成关闭握手(对端主动关闭时回一帧 Close),避免客户端 WS 报异常关闭。
         try
@@ -76,17 +81,22 @@ public sealed class EventIngest(Db db, ServerConfig cfg, ILogger<EventIngest> lo
         log.LogInformation("Agent 断开 seat={Seat} agent={Agent}", seatId, agentId);
     }
 
-    private async Task OnHelloAsync(WebSocket ws, string agentId, CancellationToken ct)
+    private async Task OnHelloAsync(AgentHub.Conn conn, string agentId, CancellationToken ct)
     {
-        long maxSeq = db.Locked(conn =>
+        long maxSeq = db.Locked(c2 =>
         {
-            using SqliteCommand c = conn.Cmd("SELECT COALESCE(MAX(seq),0) FROM events WHERE agent_id=@a", ("@a", agentId));
+            using SqliteCommand c = c2.Cmd("SELECT COALESCE(MAX(seq),0) FROM events WHERE agent_id=@a", ("@a", agentId));
             return Convert.ToInt64(c.ExecuteScalar());
         });
-        await WsUtil.SendTextAsync(ws, JsonSerializer.Serialize(new { v = 1, type = "hello_ack", maxSeq }), ct);
+        await conn.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "hello_ack", maxSeq }), ct);
+
+        // 该考试若已设配置,连上即推一次,使新连 / 重连的 Agent 拿到当前配置
+        string? cfgJson = hub.GetConfig(conn.ExamId);
+        if (cfgJson is not null)
+            await conn.SendAsync("{\"v\":1,\"type\":\"config_update\",\"config\":" + cfgJson + "}", ct);
     }
 
-    private async Task OnEventAsync(WebSocket ws, JsonElement frame, CancellationToken ct)
+    private async Task OnEventAsync(AgentHub.Conn link, JsonElement frame, CancellationToken ct)
     {
         if (!frame.TryGetProperty("event", out JsonElement e) || e.ValueKind != JsonValueKind.Object) return;
 
@@ -111,7 +121,7 @@ public sealed class EventIngest(Db db, ServerConfig cfg, ILogger<EventIngest> lo
             string want = EventCanonical.Sig(cfg.Psk!, hashSelf ?? "", seq);
             if (sig is null || !Crypto.FixedTimeEquals(sig, want))
             {
-                await WsUtil.SendTextAsync(ws, JsonSerializer.Serialize(new { v = 1, type = "error", code = "bad_sig", seq }), ct);
+                await link.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "error", code = "bad_sig", seq }), ct);
                 log.LogWarning("事件验签失败 agent={Agent} seq={Seq}", agentId, seq);
                 return;
             }
@@ -163,7 +173,7 @@ public sealed class EventIngest(Db db, ServerConfig cfg, ILogger<EventIngest> lo
         if (newId is not null && risk >= cfg.RiskThreshold && typeStr != "heartbeat")
             EnqueueSuspicious(examId, seatId, ts, typeStr, risk, newId.Value, evidenceImageId, payloadRaw);
 
-        await WsUtil.SendTextAsync(ws, JsonSerializer.Serialize(new { v = 1, type = "ack", upto = uptoSeq }), ct);
+        await link.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "ack", upto = uptoSeq }), ct);
     }
 
     private void EnqueueSuspicious(string examId, string seatId, double ts, string typeStr,
