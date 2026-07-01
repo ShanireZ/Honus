@@ -648,6 +648,28 @@ public class SecretProtectTests
         // 都无 → 空串(不抛)
         Assert.Equal("", Horus.Server.Config.SecretProtect.Resolve(new Horus.Server.Config.ServerConfig()));
     }
+
+    [Fact]
+    public void 明文key自动加密回写_清明文_保注释其它字段_可解密()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-cfg-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        string path = Path.Combine(dir, "server.config.json");
+        try
+        {
+            File.WriteAllText(path,
+                "{\n  // 视觉 key 注释\n  \"visionApiKey\": \"sk-mimo-plain-999\",\n  \"visionApiKeyEnc\": \"\",\n  \"riskThreshold\": 50\n}");
+            string? enc = Horus.Server.Config.SecretProtect.EncryptVisionKeyInFile(path, "sk-mimo-plain-999");
+            Assert.NotNull(enc);
+            string after = File.ReadAllText(path);
+            Assert.DoesNotContain("sk-mimo-plain-999", after);      // 明文已清
+            Assert.Contains(enc!, after);                            // 密文已写
+            Assert.Contains("// 视觉 key 注释", after);              // 注释保留(行内替换,非整文件重写)
+            Assert.Contains("\"riskThreshold\": 50", after);        // 其它字段原样
+            Assert.Equal("sk-mimo-plain-999", Horus.Server.Config.SecretProtect.Unprotect(enc!));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }
 
 /// 可切换失败的 HTTP 处理器:Fail=true 时抛异常(模拟图片通道离线),否则转发到内层(TestServer)。

@@ -34,8 +34,9 @@
   "visionProvider": "openai",
   "visionBaseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
   "visionModel": "MiMo-V2.5",
-  // API key **不存明文**:在部署机上跑 `Horus.Server protect-secret <你的key>` 得 DPAPI 密文,粘到 visionApiKeyEnc。
-  //   联调可临时用 HORUS_VISION_KEY 环境变量注入明文(优先级最高)。
+  // ★ API key:**直接把明文填到 visionApiKey**,服务器启动会**自动加密**为下面的 visionApiKeyEnc 并**清空本字段**(密文回写文件·明文不再存在)。
+  "visionApiKey": "",
+  // 自动生成的 DPAPI 密文(机器绑定·勿手改)。也可用 `Horus.Server protect-secret <key>` 预生成后直接填这里、visionApiKey 留空。
   "visionApiKeyEnc": "",
   "visionConfidenceThreshold": 60,
   "visionAnalyzeBaseline": false
