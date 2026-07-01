@@ -4,10 +4,10 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using Honus.Contracts;
+using Horus.Contracts;
 using Xunit;
 
-namespace Honus.Server.Tests;
+namespace Horus.Server.Tests;
 
 public class IngestTests
 {
@@ -283,12 +283,12 @@ public class IngestTests
 
         // 错令牌 → 401
         var bad = new HttpRequestMessage(HttpMethod.Get, "/api/exams");
-        bad.Headers.Add("X-Honus-Admin", "wrong");
+        bad.Headers.Add("X-Horus-Admin", "wrong");
         Assert.Equal(HttpStatusCode.Unauthorized, (await http.SendAsync(bad)).StatusCode);
 
         // 对令牌 → 放行(200)
         var ok = new HttpRequestMessage(HttpMethod.Get, "/api/exams");
-        ok.Headers.Add("X-Honus-Admin", TestApp.AdminToken);
+        ok.Headers.Add("X-Horus-Admin", TestApp.AdminToken);
         Assert.Equal(HttpStatusCode.OK, (await http.SendAsync(ok)).StatusCode);
 
         // 图片字节端点用 ?t= 查询令牌(<img> 无法设头):对令牌过鉴权(404 而非 401),无令牌 401
@@ -334,15 +334,15 @@ public class IngestTests
         var req = new HttpRequestMessage(HttpMethod.Post, "/ingest/images");
         req.Content = new ByteArrayContent(webp);
         req.Content.Headers.ContentType = new MediaTypeHeaderValue("image/webp");
-        req.Headers.Add("X-Honus-Exam", exam);
-        req.Headers.Add("X-Honus-Seat", seat);
-        req.Headers.Add("X-Honus-Agent", agent);
-        req.Headers.Add("X-Honus-Seq", seq.ToString());
-        req.Headers.Add("X-Honus-Trigger", trigger);
-        req.Headers.Add("X-Honus-Phash", phash);
-        req.Headers.Add("X-Honus-Ts", ts);
-        req.Headers.Add("X-Honus-Sig", sig);
-        if (clientId is not null) req.Headers.Add("X-Honus-Image-Id", clientId);
+        req.Headers.Add("X-Horus-Exam", exam);
+        req.Headers.Add("X-Horus-Seat", seat);
+        req.Headers.Add("X-Horus-Agent", agent);
+        req.Headers.Add("X-Horus-Seq", seq.ToString());
+        req.Headers.Add("X-Horus-Trigger", trigger);
+        req.Headers.Add("X-Horus-Phash", phash);
+        req.Headers.Add("X-Horus-Ts", ts);
+        req.Headers.Add("X-Horus-Sig", sig);
+        if (clientId is not null) req.Headers.Add("X-Horus-Image-Id", clientId);
 
         HttpResponseMessage resp = await http.SendAsync(req);
         resp.EnsureSuccessStatusCode();

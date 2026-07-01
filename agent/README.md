@@ -1,4 +1,4 @@
-# Honus.Agent — 采集端骨架（C#/.NET）
+# Horus.Agent — 采集端骨架（C#/.NET）
 
 考试机上的信号采集端。采 OS 元数据信号 + 事件触发/随机基线截图，盖哈希链后经 WebSocket（事件）/ HTTP（图片）上报服务器。**这是 M1 骨架**：核心信号采集可跑，传输的接收循环/重连/续传、签名校验、L2/L3 分析留有 `TODO`。
 
@@ -8,7 +8,7 @@
 
 ## 构建 / 运行
 ```powershell
-cd D:\WorkSpace\honus\agent
+cd D:\WorkSpace\horus\agent
 dotnet restore
 dotnet build -c Release
 
@@ -18,7 +18,7 @@ dotnet publish -c Release -r win-x64 --self-contained true `
 
 # 运行(传配置路径,缺省 agent.config.json)
 cp agent.config.sample.json agent.config.json   # 改好里面的 server/psk/白名单
-.\bin\Release\net8.0-windows\win-x64\publish\Honus.Agent.exe agent.config.json
+.\bin\Release\net8.0-windows\win-x64\publish\Horus.Agent.exe agent.config.json
 ```
 
 `psk` 生成（base64 的 32 字节）：
@@ -53,7 +53,7 @@ Program.cs                         装配 + 管线 + 基线/心跳循环
 - **防篡改**：每条事件入哈希链 + HMAC 签名；`Handle` 用锁串行化盖章，保证链序与 seq 一致。
 
 ## 已知 TODO（M1 之后）
-- UplinkClient：握手鉴权、接收循环（ack/config_update/capture_now）、断线重连 + `LocalBuffer.ReplayAsync` 续传、图片 `X-Honus-Sig`。
+- UplinkClient：握手鉴权、接收循环（ack/config_update/capture_now）、断线重连 + `LocalBuffer.ReplayAsync` 续传、图片 `X-Horus-Sig`。
 - 多显示器抓图（当前只抓主屏——见威胁矩阵"第二显示器"盲区）。
 - 切窗爆发源（alt_tab_burst）、ETW 替代 WMI 降延迟。
 - ClipboardWatcher 干净关停消息泵。

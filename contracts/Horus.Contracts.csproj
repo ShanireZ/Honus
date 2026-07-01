@@ -7,8 +7,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>Honus.Contracts</AssemblyName>
-    <RootNamespace>Honus.Contracts</RootNamespace>
+    <AssemblyName>Horus.Contracts</AssemblyName>
+    <RootNamespace>Horus.Contracts</RootNamespace>
   </PropertyGroup>
 
 </Project>

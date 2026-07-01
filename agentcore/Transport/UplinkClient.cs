@@ -2,11 +2,11 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using Honus.Agent.Buffer;
-using Honus.Agent.Config;
-using Honus.Contracts;
+using Horus.Agent.Buffer;
+using Horus.Agent.Config;
+using Horus.Contracts;
 
-namespace Honus.Agent.Transport;
+namespace Horus.Agent.Transport;
 
 /// 事件走 WebSocket(实时),图片走 HTTP。**含握手鉴权、hello/ack、断线重连(指数退避)、续传**。
 /// 可靠性:每条事件先落缓冲再尽力发送;服务器 ack(upto) 后压实;重连后按 seq 续传(服务器幂等去重)。
@@ -60,11 +60,11 @@ public sealed class UplinkClient : IAsyncDisposable
         return s;
     }
 
-    /// 默认 WS 连接:带 X-Honus-Auth 握手头的 ClientWebSocket。
+    /// 默认 WS 连接:带 X-Horus-Auth 握手头的 ClientWebSocket。
     private async Task<WebSocket> DefaultConnectAsync(Uri uri, CancellationToken ct)
     {
         var ws = new ClientWebSocket();
-        ws.Options.SetRequestHeader("X-Honus-Auth", Auth.Handshake(_cfg.Psk, _cfg.ExamId, _cfg.SeatId, _cfg.AgentId));
+        ws.Options.SetRequestHeader("X-Horus-Auth", Auth.Handshake(_cfg.Psk, _cfg.ExamId, _cfg.SeatId, _cfg.AgentId));
         await ws.ConnectAsync(uri, ct).ConfigureAwait(false);
         return ws;
     }
@@ -95,7 +95,8 @@ public sealed class UplinkClient : IAsyncDisposable
             }
 
             if (ct.IsCancellationRequested) break;
-            try { await Task.Delay(backoffMs, ct).ConfigureAwait(false); }
+            int delay = backoffMs / 2 + Random.Shared.Next(backoffMs);   // ±50% 抖动:打散多 Agent 同步重连风暴
+            try { await Task.Delay(delay, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
             backoffMs = Math.Min(backoffMs * 2, 30_000);           // 上限 30s
         }
@@ -200,7 +201,7 @@ public sealed class UplinkClient : IAsyncDisposable
 
     private static string NewImageId() => "img_" + Guid.NewGuid().ToString("N");
 
-    /// 实际 HTTP 上传(含 X-Honus-Sig 签名;clientId 非空则带 X-Honus-Image-Id 由服务器沿用)。
+    /// 实际 HTTP 上传(含 X-Horus-Sig 签名;clientId 非空则带 X-Horus-Image-Id 由服务器沿用)。
     /// 成功返回 imageId,失败返回 null(不落缓冲)。
     private async Task<string?> PostImageAsync(byte[] webp, string trigger, ulong phash, long seq, string? clientId, CancellationToken ct)
     {
@@ -215,15 +216,15 @@ public sealed class UplinkClient : IAsyncDisposable
             content.Headers.ContentType = new MediaTypeHeaderValue("image/webp");
 
             using var req = new HttpRequestMessage(HttpMethod.Post, _httpUri) { Content = content };
-            req.Headers.Add("X-Honus-Exam", _cfg.ExamId);
-            req.Headers.Add("X-Honus-Seat", _cfg.SeatId);
-            req.Headers.Add("X-Honus-Agent", _cfg.AgentId);
-            req.Headers.Add("X-Honus-Seq", seq.ToString());
-            req.Headers.Add("X-Honus-Trigger", trigger);
-            req.Headers.Add("X-Honus-Phash", phashHex);
-            req.Headers.Add("X-Honus-Ts", ts);
-            req.Headers.Add("X-Honus-Sig", sig);
-            if (clientId is not null) req.Headers.Add("X-Honus-Image-Id", clientId);   // 客户端预生成 id,服务器沿用
+            req.Headers.Add("X-Horus-Exam", _cfg.ExamId);
+            req.Headers.Add("X-Horus-Seat", _cfg.SeatId);
+            req.Headers.Add("X-Horus-Agent", _cfg.AgentId);
+            req.Headers.Add("X-Horus-Seq", seq.ToString());
+            req.Headers.Add("X-Horus-Trigger", trigger);
+            req.Headers.Add("X-Horus-Phash", phashHex);
+            req.Headers.Add("X-Horus-Ts", ts);
+            req.Headers.Add("X-Horus-Sig", sig);
+            if (clientId is not null) req.Headers.Add("X-Horus-Image-Id", clientId);   // 客户端预生成 id,服务器沿用
 
             using HttpResponseMessage resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return null;
@@ -275,6 +276,7 @@ public sealed class UplinkClient : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        try { _buffer.Compact(); } catch { /* 关停时把已确认的压实掉 */ }
         WebSocket? ws = _ws;
         if (ws is not null)
         {

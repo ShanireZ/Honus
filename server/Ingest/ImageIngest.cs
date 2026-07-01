@@ -1,31 +1,37 @@
-using Honus.Contracts;
-using Honus.Server.Config;
-using Honus.Server.Data;
+using Horus.Contracts;
+using Horus.Server.Config;
+using Horus.Server.Data;
 using Microsoft.Data.Sqlite;
 
-namespace Honus.Server.Ingest;
+namespace Horus.Server.Ingest;
 
 /// 图片通道(HTTP POST /ingest/images)。见 api-contract §2.1。
-/// 校验 X-Honus-Sig;pHash 去重;原图存盘;DB 存指针。
+/// 校验 X-Horus-Sig;pHash 去重;原图存盘;DB 存指针。
 public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogger<ImageIngest> log)
 {
     public async Task HandleAsync(HttpContext ctx)
     {
         HttpRequest req = ctx.Request;
-        string examId = req.Headers["X-Honus-Exam"].ToString();
-        string seatId = req.Headers["X-Honus-Seat"].ToString();
-        string agentId = req.Headers["X-Honus-Agent"].ToString();
-        string seqStr = req.Headers["X-Honus-Seq"].ToString();
-        string trigger = req.Headers["X-Honus-Trigger"].ToString();
-        string phash = req.Headers["X-Honus-Phash"].ToString();
-        string tsStr = req.Headers["X-Honus-Ts"].ToString();
-        string sig = req.Headers["X-Honus-Sig"].ToString();
-        string clientId = req.Headers["X-Honus-Image-Id"].ToString();   // 客户端预生成 id(纳入签名)
+        string examId = req.Headers["X-Horus-Exam"].ToString();
+        string seatId = req.Headers["X-Horus-Seat"].ToString();
+        string agentId = req.Headers["X-Horus-Agent"].ToString();
+        string seqStr = req.Headers["X-Horus-Seq"].ToString();
+        string trigger = req.Headers["X-Horus-Trigger"].ToString();
+        string phash = req.Headers["X-Horus-Phash"].ToString();
+        string tsStr = req.Headers["X-Horus-Ts"].ToString();
+        string sig = req.Headers["X-Horus-Sig"].ToString();
+        string clientId = req.Headers["X-Horus-Image-Id"].ToString();   // 客户端预生成 id(纳入签名)
 
         if (string.IsNullOrEmpty(examId) || string.IsNullOrEmpty(seatId) || string.IsNullOrEmpty(agentId))
         {
             ctx.Response.StatusCode = 400;
             await ctx.Response.WriteAsJsonAsync(new { error = "missing_headers" });
+            return;
+        }
+        if (clientId.Length > 0 && !IsValidImageId(clientId))   // 畸形 client id 先拒(验签前),收敛 canonical 输入
+        {
+            ctx.Response.StatusCode = 400;
+            await ctx.Response.WriteAsJsonAsync(new { error = "bad_image_id" });
             return;
         }
 
@@ -112,11 +118,14 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, ILogge
                 ("@fp", relPath), ("@bytes", (long)body.Length)))
                 c.ExecuteNonQuery();
 
-            // 反向补标:若事件先于图片到达(在线双通道乱序),此刻回填 is_evidence,避免归档误清证据图
-            using SqliteCommand mk = conn.Cmd(
-                "UPDATE images SET is_evidence=1 WHERE image_id=@id AND EXISTS (SELECT 1 FROM events WHERE evidence_image_id=@id)",
-                ("@id", imageId));
-            mk.ExecuteNonQuery();
+            // 反向补标:仅触发型抓图(有客户端 id)才可能被事件引用;baseline 图跳过,免每张全表查 events。
+            if (hasClientId)
+            {
+                using SqliteCommand mk = conn.Cmd(
+                    "UPDATE images SET is_evidence=1 WHERE image_id=@id AND EXISTS (SELECT 1 FROM events WHERE evidence_image_id=@id)",
+                    ("@id", imageId));
+                mk.ExecuteNonQuery();
+            }
         });
 
         await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued = false });

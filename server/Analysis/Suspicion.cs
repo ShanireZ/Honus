@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Honus.Contracts;
+using Horus.Contracts;
 
-namespace Honus.Server.Analysis;
+namespace Horus.Server.Analysis;
 
 /// M1 服务器侧初筛:由事件类型 + payload 判定可疑类别(kind)。
 /// 系统只初筛,处分由人裁决(architecture 铁律 §3)。风险分由 Agent 本地初判,

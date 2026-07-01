@@ -1,4 +1,4 @@
-# Honus
+# Horus
 
 **本地局域网考试监考系统** —— 防止学员在编程 / OJ 考试中用 AI 做题或联网搜题。
 
@@ -23,7 +23,7 @@ docs/architecture-v0.2.md  权威架构设计
 docs/api-contract-m1.md    M1 接口契约(WS / HTTP 协议 + 数据模型)
 schema/schema.sql          SQLite live DB DDL
 schema/schema-archive.sql  SQLite archive DB DDL(30 天后关键数据归档)
-agent/                     C#/.NET 采集端骨架(Honus.Agent)
+agent/                     C#/.NET 采集端骨架(Horus.Agent)
 ```
 
 ## 状态

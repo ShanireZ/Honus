@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Honus.Server.Config;
+namespace Horus.Server.Config;
 
 /// 服务器配置(从 server.config.json 加载,camelCase)。record 便于用 with 施加环境变量覆盖。
 public sealed record ServerConfig
@@ -13,14 +13,17 @@ public sealed record ServerConfig
     public string DataDir { get; init; } = "./data";
 
     /// SQLite 文件路径;":memory:" 走内存(测试用)。相对路径相对 DataDir。
-    public string DbPath { get; init; } = "honus.db";
+    public string DbPath { get; init; } = "horus.db";
 
     /// 预共享 HMAC 密钥(base64)。与 Agent 同一把。留空则**关闭验签**(仅本地联调,生产必须配)。
     public string? PskBase64 { get; init; }
 
-    /// 管理/看板令牌。所有 /api/* 请求需带 X-Honus-Admin 头(图片字节端点可用 ?t= 查询)。
+    /// 管理/看板令牌。所有 /api/* 请求需带 X-Horus-Admin 头(图片字节端点可用 ?t= 查询)。
     /// 留空则关闭管理鉴权(仅本地联调)。防止学员机调 /api/exams/{id}/config 关掉全场检测。
     public string? AdminToken { get; init; }
+
+    /// 允许在非 loopback 绑定下缺 PSK / 管理令牌启动(裸奔)。默认 false = fail-closed。仅联调开。
+    public bool AllowInsecure { get; init; }
 
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。
     public int RiskThreshold { get; init; } = 50;

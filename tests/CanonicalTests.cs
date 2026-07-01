@@ -1,9 +1,9 @@
-using Honus.Contracts;
+using Horus.Contracts;
 using Xunit;
 
-namespace Honus.Server.Tests;
+namespace Horus.Server.Tests;
 
-/// 锁定 canonical / 哈希 / 签名的**逐字节**格式。Agent 与 Server 共用 Honus.Contracts 的这套实现,
+/// 锁定 canonical / 哈希 / 签名的**逐字节**格式。Agent 与 Server 共用 Horus.Contracts 的这套实现,
 /// 此测试即两端一致性的黄金基准——任何字段顺序 / 命名 / 枚举编码漂移都会被抓到。
 public class CanonicalTests
 {

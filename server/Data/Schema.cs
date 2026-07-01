@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Data.Sqlite;
 
-namespace Honus.Server.Data;
+namespace Horus.Server.Data;
 
 /// 从内嵌资源读取权威 DDL(schema.sql)并应用。
 /// M1 剥离 sqlite-vec 的 vec0 虚表(需 vec0 扩展,属 M3),其余表照建。

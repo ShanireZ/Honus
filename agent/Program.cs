@@ -1,13 +1,13 @@
-using Honus.Agent.Buffer;
-using Honus.Agent.Capture;
-using Honus.Agent.Config;
-using Honus.Agent.Integrity;
-using Honus.Agent.Model;
-using Honus.Agent.Signals;
-using Honus.Agent.Transport;
-using Honus.Contracts;   // AgentEvent / SignalType / Envelope(线协议共享)
+using Horus.Agent.Buffer;
+using Horus.Agent.Capture;
+using Horus.Agent.Config;
+using Horus.Agent.Integrity;
+using Horus.Agent.Model;
+using Horus.Agent.Signals;
+using Horus.Agent.Transport;
+using Horus.Contracts;   // AgentEvent / SignalType / Envelope(线协议共享)
 
-namespace Honus.Agent;
+namespace Horus.Agent;
 
 /// 采集端入口。默认 MTA(利于 UIAutomation 客户端);剪贴板监听自带 STA 线程。
 internal static class Program
@@ -17,7 +17,7 @@ internal static class Program
         string cfgPath = args.Length > 0 ? args[0] : "agent.config.json";
         AgentConfig cfg;
         try { cfg = AgentConfig.Load(cfgPath); }
-        catch (Exception ex) { Console.Error.WriteLine($"[honus-agent] 配置加载失败: {ex.Message}"); return 1; }
+        catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] 配置加载失败: {ex.Message}"); return 1; }
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
@@ -39,7 +39,7 @@ internal static class Program
         uplink.OnConfigUpdate = json =>
         {
             live.Apply(json);
-            Console.WriteLine("[honus-agent] 已应用 config_update 热更新");
+            Console.WriteLine("[horus-agent] 已应用 config_update 热更新");
         };
 
         // 事件管线:RawSignal →(必要时抓图)→ 盖章(ts/seq/hash)→ 发送
@@ -70,7 +70,7 @@ internal static class Program
                 }
                 await uplink.SendEventAsync(json, seq, cts.Token);
             }
-            catch (Exception ex) { Console.Error.WriteLine($"[honus-agent] 处理信号异常: {ex.Message}"); }
+            catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] 处理信号异常: {ex.Message}"); }
         }
 
         // 装配信号源
@@ -89,13 +89,13 @@ internal static class Program
         foreach (ISignalSource s in sources)
         {
             try { s.Start(); }
-            catch (Exception ex) { Console.Error.WriteLine($"[honus-agent] 启动 {s.Name} 失败: {ex.Message}"); }
+            catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] 启动 {s.Name} 失败: {ex.Message}"); }
         }
 
         _ = Task.Run(() => BaselineLoop(live, capturer, cts.Token));
         _ = Task.Run(() => HeartbeatLoop(Handle, cts.Token));
 
-        Console.WriteLine($"[honus-agent] 运行中 seat={cfg.SeatId} exam={cfg.ExamId}。Ctrl+C 退出。");
+        Console.WriteLine($"[horus-agent] 运行中 seat={cfg.SeatId} exam={cfg.ExamId}。Ctrl+C 退出。");
         cts.Token.WaitHandle.WaitOne();
 
         foreach (ISignalSource s in sources) { try { s.Stop(); s.Dispose(); } catch { /* ignore */ } }
@@ -114,7 +114,7 @@ internal static class Program
             try { await Task.Delay(TimeSpan.FromSeconds(wait), ct); }
             catch (TaskCanceledException) { break; }
             try { await cap.CaptureAsync("baseline_random", dedupAgainstLast: false); }
-            catch (Exception ex) { Console.Error.WriteLine($"[honus-agent] 基线抓图异常: {ex.Message}"); }
+            catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] 基线抓图异常: {ex.Message}"); }
         }
     }
 

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Honus.Contracts;
+namespace Horus.Contracts;
 
 /// 信号类型。序列化为 snake_case(见 Json.Wire),与 api-contract / schema 对齐。
 public enum SignalType

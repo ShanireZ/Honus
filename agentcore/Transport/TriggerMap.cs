@@ -1,4 +1,4 @@
-namespace Honus.Agent.Transport;
+namespace Horus.Agent.Transport;
 
 /// 把信号源的 CaptureReason 映射为 api-contract §2.1 约定的 trigger 取值。
 /// 否则生产库 images.trigger 会是 browser_non_whitelist_url 之类的脏值,与契约/归档/统计错配。

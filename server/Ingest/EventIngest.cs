@@ -1,15 +1,15 @@
 using System.Net.WebSockets;
 using System.Text.Json;
-using Honus.Contracts;
-using Honus.Server.Analysis;
-using Honus.Server.Config;
-using Honus.Server.Data;
+using Horus.Contracts;
+using Horus.Server.Analysis;
+using Horus.Server.Config;
+using Horus.Server.Data;
 using Microsoft.Data.Sqlite;
 
-namespace Honus.Server.Ingest;
+namespace Horus.Server.Ingest;
 
 /// 事件通道(WebSocket /ingest/events)。见 api-contract §1。
-/// 握手校验 X-Honus-Auth;每事件校验 sig;幂等落库(agent_id,seq,type);risk≥阈值入可疑队列。
+/// 握手校验 X-Horus-Auth;每事件校验 sig;幂等落库(agent_id,seq,type);risk≥阈值入可疑队列。
 public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<EventIngest> log)
 {
     public async Task HandleAsync(HttpContext ctx)
@@ -23,7 +23,7 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
         // 握手鉴权(见 §1.1)
         if (cfg.AuthEnabled)
         {
-            string got = ctx.Request.Headers["X-Honus-Auth"].ToString();
+            string got = ctx.Request.Headers["X-Horus-Auth"].ToString();
             string want = Auth.Handshake(cfg.Psk!, examId, seatId, agentId);
             if (!Crypto.FixedTimeEquals(got, want))
             {

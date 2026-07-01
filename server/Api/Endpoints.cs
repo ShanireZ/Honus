@@ -1,11 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Honus.Server.Config;
-using Honus.Server.Data;
-using Honus.Server.Ingest;
+using Horus.Server.Config;
+using Horus.Server.Data;
+using Horus.Server.Ingest;
 using Microsoft.Data.Sqlite;
 
-namespace Honus.Server.Api;
+namespace Horus.Server.Api;
 
 /// 看板只读 API(/api/exams, /seats, /suspicious, /events, /images) + 管理/复核写 API
 /// (建考试、结束考试、可疑裁决)。系统给线索,处分由人裁决。
@@ -173,6 +173,8 @@ public static class Endpoints
             string? full = storage.Resolve(rel);
             if (full is null || !File.Exists(full)) { ctx.Response.StatusCode = 404; return; }
             ctx.Response.ContentType = "image/webp";
+            ctx.Response.Headers["Referrer-Policy"] = "no-referrer";   // 令牌在 ?t= 查询里,别经 Referer 外泄
+            ctx.Response.Headers["Cache-Control"] = "no-store";        // 别把带令牌的 URL 落盘缓存
             await ctx.Response.SendFileAsync(full);
         });
 

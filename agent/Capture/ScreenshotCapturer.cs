@@ -1,11 +1,11 @@
 using System.Drawing;
 using System.Drawing.Imaging;
-using Honus.Agent.Config;
+using Horus.Agent.Config;
 using SixLabors.ImageSharp.Formats.Webp;
 using SixLabors.ImageSharp.Processing;
 using IsImage = SixLabors.ImageSharp.Image;
 
-namespace Honus.Agent.Capture;
+namespace Horus.Agent.Capture;
 
 /// 抓屏 → 缩放到目标高度 → WebP 编码 → pHash →(可选去重)→ 交上传委托,返回 imageId。
 /// 抓图串行化(SemaphoreSlim),避免并发触发时 _lastPhash 竞争。

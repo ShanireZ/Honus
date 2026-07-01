@@ -1,20 +1,20 @@
-# AGENTS.md — Honus
+# AGENTS.md — Horus
 
 > 本文件遵循并指回工作区根准则 [`../AGENTS.md`](../AGENTS.md)。先读根准则，再读本文件。
 
 ## 项目一句话
-**Honus** — 本地局域网**考试监考系统**，防止学员在编程 / OJ 考试中用 AI 做题或联网搜题。学员**本地 IDE 写 C++ + 网页判题**提交；服务器为局域网内 1+ 台笔记本。架构 = **纯检测 + 取证**（已决定不做网络/主机预防层），**元数据优先、图像为辅**，系统只初筛、人工裁决。权威设计见 [docs/architecture-v0.2.md](docs/architecture-v0.2.md)。
+**Horus** — 本地局域网**考试监考系统**，防止学员在编程 / OJ 考试中用 AI 做题或联网搜题。学员**本地 IDE 写 C++ + 网页判题**提交；服务器为局域网内 1+ 台笔记本。架构 = **纯检测 + 取证**（已决定不做网络/主机预防层），**元数据优先、图像为辅**，系统只初筛、人工裁决。权威设计见 [docs/architecture-v0.2.md](docs/architecture-v0.2.md)。
 
 ## 语言
 所有文档、注释、提交信息一律用中文。
 
 ## 组件与技术栈
-- **共享契约** [contracts/](contracts/)（`Honus.Contracts`，net8.0）：线协议 / canonical / HMAC / 枚举 / 事件模型。Agent 与 Server **共用同一实现**，保证哈希链与签名两端逐字节一致。
-- **采集核心** [agentcore/](agentcore/)（`Honus.Agent.Core`，net8.0）：平台无关的传输（WS/HTTP + 握手/hello/ack + **断线重连指数退避** + **续传**）、断网缓冲、配置、哈希链封装。刻意非 -windows，便于被测试直接引用。
-- **采集端 Agent**（考试机，每台一个）：C#/.NET 单文件 exe，需管理员权限（ETW / UIAutomation / WMI）。Windows 专属部分（抓屏 / 信号源）。代码 [agent/](agent/)（`Honus.Agent`，net8.0-windows，引用 Core）。
-- **监考服务器**（笔记本）：接收 + 分析 + 落库 + Web 看板。**.NET 8 / ASP.NET Core**（minimal API + WebSocket）+ **Microsoft.Data.Sqlite** + 文件系统（+ M3 起 sqlite-vec）。代码 [server/](server/)（`Honus.Server`，net8.0）。**仅服务器对外联网，且只为云 OCR**。
+- **共享契约** [contracts/](contracts/)（`Horus.Contracts`，net8.0）：线协议 / canonical / HMAC / 枚举 / 事件模型。Agent 与 Server **共用同一实现**，保证哈希链与签名两端逐字节一致。
+- **采集核心** [agentcore/](agentcore/)（`Horus.Agent.Core`，net8.0）：平台无关的传输（WS/HTTP + 握手/hello/ack + **断线重连指数退避** + **续传**）、断网缓冲、配置、哈希链封装。刻意非 -windows，便于被测试直接引用。
+- **采集端 Agent**（考试机，每台一个）：C#/.NET 单文件 exe，需管理员权限（ETW / UIAutomation / WMI）。Windows 专属部分（抓屏 / 信号源）。代码 [agent/](agent/)（`Horus.Agent`，net8.0-windows，引用 Core）。
+- **监考服务器**（笔记本）：接收 + 分析 + 落库 + Web 看板。**.NET 8 / ASP.NET Core**（minimal API + WebSocket）+ **Microsoft.Data.Sqlite** + 文件系统（+ M3 起 sqlite-vec）。代码 [server/](server/)（`Horus.Server`，net8.0）。**仅服务器对外联网，且只为云 OCR**。
 - **监考端 / 复核台**：实时看板 + 可疑队列复核。纯原生单页看板在 [server/wwwroot/](server/wwwroot/)。
-- **测试**：[tests/](tests/)（`Honus.Server.Tests`，xUnit）——端到端覆盖 WS 握手/验签/幂等、图片去重、击键、人工裁决、canonical 黄金格式。
+- **测试**：[tests/](tests/)（`Horus.Server.Tests`，xUnit）——端到端覆盖 WS 握手/验签/幂等、图片去重、击键、人工裁决、canonical 黄金格式。
 
 ## 设计铁律（任何改动都必须守）
 1. **预防层为零，检测必须扎实** — 控不了考场网络、也不做主机防火墙，联网搜题 / 网页 AI 只能靠 URL / 进程 / 截图**检测取证**（事后），不可阻断。**浏览器 URL 监控是第一防线**。
@@ -34,28 +34,29 @@
 - [docs/api-contract-m1.md](docs/api-contract-m1.md) — M1 接口契约（Agent↔Server 协议 + 数据模型）
 - [schema/schema.sql](schema/schema.sql) — SQLite **live** DB DDL
 - [schema/schema-archive.sql](schema/schema-archive.sql) — SQLite **archive** DB DDL
-- [contracts/](contracts/) — 共享线协议库（`Honus.Contracts`）
-- [agentcore/](agentcore/) — 平台无关采集核心（`Honus.Agent.Core`：传输/续传/重连/缓冲）
-- [agent/](agent/) — Windows 采集端（`Honus.Agent`：抓屏/信号源）
-- [server/](server/) — 监考服务器 + 看板（`Honus.Server`，见 [server/README.md](server/README.md)）
-- [tests/](tests/) — 端到端测试（`Honus.Server.Tests`）
-- [Honus.sln](Honus.sln) — 解决方案（4 个项目）
+- [contracts/](contracts/) — 共享线协议库（`Horus.Contracts`）
+- [agentcore/](agentcore/) — 平台无关采集核心（`Horus.Agent.Core`：传输/续传/重连/缓冲）
+- [agent/](agent/) — Windows 采集端（`Horus.Agent`：抓屏/信号源）
+- [server/](server/) — 监考服务器 + 看板（`Horus.Server`，见 [server/README.md](server/README.md)）
+- [tests/](tests/) — 端到端测试（`Horus.Server.Tests`）
+- [Horus.sln](Horus.sln) — 解决方案（4 个项目）
 
 ## 构建 / 测试（需 .NET 8 SDK，无需 VS）
 ```
-dotnet build Honus.sln -c Debug      # 全量编译(Agent 走 net8.0-windows)
-dotnet test  Honus.sln -c Debug      # 运行端到端测试
+dotnet build Horus.sln -c Debug      # 全量编译(Agent 走 net8.0-windows)
+dotnet test  Horus.sln -c Debug      # 运行端到端测试
 ```
 
 ## 状态
 **M1 最小闭环已实现并通过端到端验证**：
-- ✅ `Honus.Contracts` + `Honus.Agent.Core` + `Honus.Agent`（编译通过·0 警告）+ `Honus.Server`（WS/HTTP ingest + 落库 + 看板）。
+- ✅ `Horus.Contracts` + `Horus.Agent.Core` + `Horus.Agent`（编译通过·0 警告）+ `Horus.Server`（WS/HTTP ingest + 落库 + 看板）。
 - ✅ **Agent 端可靠性完成**：握手鉴权、hello/hello_ack、ack、**断线重连（指数退避）**、**断网缓冲 + 续传**（`UplinkClient` + `LocalBuffer`，服务器幂等去重），图片 HMAC 签名 + 补传。
 - ✅ **config_update 热更新**：服务器 `POST /api/exams/{examId}/config` → `AgentHub` 推送给在线 Agent（新连/重连在 hello 时补推）→ Agent `LiveConfig` 原子应用（白名单/阈值/截图参数，下一轮采集即生效）。
-- ✅ **证据图跨重连关联**：触发型抓图**客户端预生成 imageId**（`X-Honus-Image-Id`，服务器沿用、跳过 pHash 去重、幂等），离线缓冲 + 断线重连补传后 `evidenceImageId` 关联不断。
-- ✅ **三路独立审计（安全 / 并发与数据完整性 / 正确性与契约）+ 修复**：修掉两条会丢证据的 Critical（`ack` 改**逐条确认**杜绝空洞误删、**序号高水位持久化**杜绝重启复用）、`trigger` 映射为契约值、`is_evidence` 乱序回填、`url_unreadable` 强制入队、缓冲原子压实 + 崩溃恢复、Schema DDL 切分健壮化；安全加固：**管理令牌 `X-Honus-Admin`（/api 全鉴权）**、图片体/WS 帧大小上限、`X-Honus-Image-Id` 纳入签名、`LiveConfig` 上下限钳制、路径穿越边界、旧连接 Abort、Dispose 竞态。
-- ✅ **33 项测试全绿**（含审计发现的回归：逐条 ack / 重启不复用 seq / trigger 映射 / is_evidence 回填 / Schema 分号健壮 / 管理鉴权 401·200·?t=）+ 真机跑通（含管理令牌 401/200/?t= curl 验证）。
-- ⏳ 待办（已记入 architecture §10.1 残留风险）：M2 完整 canonical 复算 + 哈希链复验 + 签名时效防重放 + keystroke 会话鉴权 + 云 OCR + L3 Logo；M3 CLIP / 归档作业。里程碑见 architecture §15。
+- ✅ **证据图跨重连关联**：触发型抓图**客户端预生成 imageId**（`X-Horus-Image-Id`，服务器沿用、跳过 pHash 去重、幂等），离线缓冲 + 断线重连补传后 `evidenceImageId` 关联不断。
+- ✅ **三路独立审计（安全 / 并发与数据完整性 / 正确性与契约）+ 修复**：修掉两条会丢证据的 Critical（`ack` 改**逐条确认**杜绝空洞误删、**序号高水位持久化**杜绝重启复用）、`trigger` 映射为契约值、`is_evidence` 乱序回填、`url_unreadable` 强制入队、缓冲原子压实 + 崩溃恢复、Schema DDL 切分健壮化；安全加固：**管理令牌 `X-Horus-Admin`（/api 全鉴权）**、图片体/WS 帧大小上限、`X-Horus-Image-Id` 纳入签名、`LiveConfig` 上下限钳制、路径穿越边界、旧连接 Abort、Dispose 竞态。
+- ✅ **第二轮复审（性能/负载/可靠性 · 安全 · 逻辑/回归 三路并行）+ 修复**：修上一轮引入的两条回归——`url_unreadable` 每 2s 刷爆队列（改为只在进入不可读态发一次）、逐条 ack 的 O(N²) 全文件重写（改**攒批压实**）；+ 性能（看板/回填索引、图片体 8→2MB、重连 jitter）+ 安全（**fail-closed** 非 loopback 缺凭证拒启动、`FixedTimeEquals` 不泄漏长度、图片 `?t=` 加 no-referrer/no-store、clientId 验签前校验）+ 逻辑（`LiveConfig` 只下发一端不篡改另一端）。
+- ✅ **41 项测试全绿**（含两轮审计的回归：逐条/攒批 ack · 重启不复用 seq · trigger 映射 · is_evidence 回填 · Schema 分号健壮 · 管理鉴权 401·200·?t= · fail-closed · FixedTimeEquals · LiveConfig 单端下发）+ 真机 curl 验证。
+- ⏳ 待办（记入 architecture §10.1/§10.2）：M2 结构性（DB 读写分离 / 信号入队单写线程 / 归档清理任务 / 完整 canonical 复算 + 哈希链复验 / 签名防重放 / keystroke 会话鉴权 / token 上 HttpOnly cookie+CSP）+ 云 OCR + L3 Logo；M3 CLIP / 归档作业。里程碑见 architecture §15。
 
 ## 提交约定
 默认不提交，除非用户明确要求。commit 信息用中文，简洁。

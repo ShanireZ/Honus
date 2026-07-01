@@ -1,8 +1,8 @@
 using System.Management;
-using Honus.Agent.Model;
-using Honus.Contracts;
+using Horus.Agent.Model;
+using Horus.Contracts;
 
-namespace Honus.Agent.Signals;
+namespace Horus.Agent.Signals;
 
 /// 可移动设备/USB 卷到达。任何插入 → 中风险 + 触发抓图。
 /// Win32_VolumeChangeEvent.EventType = 2 表示设备到达(Arrival)。

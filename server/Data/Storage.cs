@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Honus.Server.Data;
+namespace Horus.Server.Data;
 
 /// 截图原图存文件系统:images/&lt;exam&gt;/&lt;seat&gt;/&lt;imageId&gt;.webp。DB 只存相对路径指针。
 /// **原图永不出网**(architecture §5)。

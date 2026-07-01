@@ -1,7 +1,7 @@
 -- ============================================================
--- Honus 监考系统 · SQLite **live** DB DDL (M1)
+-- Horus 监考系统 · SQLite **live** DB DDL (M1)
 -- 热库:当前 + 近 30 天。30 天后关键数据转 archive(见 schema-archive.sql),其余清理。
--- 字段命名与 api-contract-m1.md / Honus.Agent 对齐(库内用 snake_case)。
+-- 字段命名与 api-contract-m1.md / Horus.Agent 对齐(库内用 snake_case)。
 -- ============================================================
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -46,9 +46,11 @@ CREATE TABLE IF NOT EXISTS events (
   sig               TEXT,
   UNIQUE (agent_id, seq)                              -- 幂等去重 / 断网续传(与契约 §1.4 一致，seq 每事件唯一)
 );
-CREATE INDEX IF NOT EXISTS ix_events_seat_ts ON events(exam_id, seat_id, ts);
+CREATE INDEX IF NOT EXISTS ix_events_seat_ts ON events(exam_id, seat_id, ts, risk);  -- 含 risk:看板 MAX(risk) 免回表
 CREATE INDEX IF NOT EXISTS ix_events_risk    ON events(exam_id, risk);
 CREATE INDEX IF NOT EXISTS ix_events_type    ON events(exam_id, type);
+-- 图片入库反向补标 is_evidence 时按 evidence_image_id 查(部分索引,仅索引有引用的行)
+CREATE INDEX IF NOT EXISTS ix_events_evidence ON events(evidence_image_id) WHERE evidence_image_id IS NOT NULL;
 
 -- 截图元数据(原图存文件系统,这里只存指针) --------------------
 CREATE TABLE IF NOT EXISTS images (
@@ -136,3 +138,5 @@ CREATE TABLE IF NOT EXISTS agent_heartbeats (
   status     TEXT NOT NULL,                           -- alive|degraded|...
   PRIMARY KEY (agent_id, ts)
 );
+-- 看板在线判定按 (exam, ts>=cut) 查,否则全表扫心跳表
+CREATE INDEX IF NOT EXISTS ix_hb_exam_ts ON agent_heartbeats(exam_id, ts);

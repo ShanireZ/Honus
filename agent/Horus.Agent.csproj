@@ -6,8 +6,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>Honus.Agent</AssemblyName>
-    <RootNamespace>Honus.Agent</RootNamespace>
+    <AssemblyName>Horus.Agent</AssemblyName>
+    <RootNamespace>Horus.Agent</RootNamespace>
 
     <!-- UIAutomation(System.Windows.Automation, 读浏览器地址栏) 需 WPF 程序集;
          隐藏消息窗口(剪贴板) + Screen 信息 需 WinForms。两者在 net*-windows 下可共存。 -->
@@ -26,10 +26,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 平台无关采集核心(传输/续传/重连/缓冲/配置)。传递引入 Honus.Contracts。 -->
-    <ProjectReference Include="..\agentcore\Honus.Agent.Core.csproj" />
+    <!-- 平台无关采集核心(传输/续传/重连/缓冲/配置)。传递引入 Horus.Contracts。 -->
+    <ProjectReference Include="..\agentcore\Horus.Agent.Core.csproj" />
     <!-- 共享线协议 / canonical / HMAC(Program 直接用 AgentEvent/Envelope/SignalType) -->
-    <ProjectReference Include="..\contracts\Honus.Contracts.csproj" />
+    <ProjectReference Include="..\contracts\Horus.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

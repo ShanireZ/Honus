@@ -1,6 +1,6 @@
 using Microsoft.Data.Sqlite;
 
-namespace Honus.Server.Data;
+namespace Horus.Server.Data;
 
 /// 单连接 + 全局串行化的 SQLite 访问层。
 /// M1 规模(局域网内数十 Agent、看板低频轮询)吞吐极小,一把写锁足够且避免 "database is locked"。

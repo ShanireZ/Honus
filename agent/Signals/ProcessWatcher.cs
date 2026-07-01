@@ -1,9 +1,9 @@
 using System.Management;
-using Honus.Agent.Config;
-using Honus.Agent.Model;
-using Honus.Contracts;
+using Horus.Agent.Config;
+using Horus.Agent.Model;
+using Horus.Contracts;
 
-namespace Honus.Agent.Signals;
+namespace Horus.Agent.Signals;
 
 /// 进程启动/退出(WMI __InstanceCreation/DeletionEvent)。
 /// 非白名单进程启动 → 高风险 + 触发抓图。

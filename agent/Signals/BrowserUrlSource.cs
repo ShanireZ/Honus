@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
-using Honus.Agent.Config;
-using Honus.Agent.Model;
-using Honus.Contracts;
+using Horus.Agent.Config;
+using Horus.Agent.Model;
+using Horus.Contracts;
 
-namespace Honus.Agent.Signals;
+namespace Horus.Agent.Signals;
 
 /// 读取前台浏览器地址栏 URL —— 本系统对抗网页 AI 的第一防线。
 /// 判题站域名白名单放行;出现非白名单 URL → 高风险 + 触发抓图。
@@ -17,6 +17,7 @@ public sealed class BrowserUrlSource : ISignalSource
     public event Action<RawSignal>? Signal;
 
     private static readonly string[] BrowserProcs = { "chrome", "msedge", "firefox", "brave", "opera" };
+    private const string UnreadableSentinel = "\0url_unreadable\0";   // _lastUrl 的"不可读"哨兵,用于去重
 
     private readonly LiveConfig _live;                 // 白名单可热更新
     private readonly TimeSpan _interval;
@@ -48,7 +49,10 @@ public sealed class BrowserUrlSource : ISignalSource
 
         if (string.IsNullOrEmpty(url))
         {
-            // 是浏览器但读不到 URL → 降级告警 + 抓图
+            // 是浏览器但读不到 URL → 降级告警 + 抓图。**只在进入"不可读"状态时发一次**,
+            // 否则每 poll(约 2s)都发会刷爆 events + 可疑队列;持续期由随机基线抓图覆盖。
+            if (_lastUrl == UnreadableSentinel) return;
+            _lastUrl = UnreadableSentinel;
             Signal?.Invoke(new RawSignal(SignalType.BrowserUrl,
                 new() { ["process"] = proc, ["url"] = null, ["note"] = "url_unreadable" },
                 Risk: 40, TriggerCapture: true, CaptureReason: "browser_url_unreadable"));

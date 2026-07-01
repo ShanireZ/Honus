@@ -1,7 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using Honus.Contracts;
+using Horus.Contracts;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Xunit;
@@ -9,7 +9,7 @@ using Xunit;
 // 环境变量为进程全局,故禁并行,避免多 TestApp 抢 env。
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
 
-namespace Honus.Server.Tests;
+namespace Horus.Server.Tests;
 
 /// 每个测试起一个隔离的 in-memory 服务器(独立 :memory: DB + 独立临时 dataDir + 固定 PSK)。
 public sealed class TestApp : WebApplicationFactory<Program>
@@ -22,12 +22,13 @@ public sealed class TestApp : WebApplicationFactory<Program>
 
     public TestApp(bool adminAuth = false)
     {
-        _dataDir = Path.Combine(Path.GetTempPath(), "honus-test-" + Guid.NewGuid().ToString("N")[..12]);
+        _dataDir = Path.Combine(Path.GetTempPath(), "horus-test-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(_dataDir);
-        Environment.SetEnvironmentVariable("HONUS_DBPATH", ":memory:");
-        Environment.SetEnvironmentVariable("HONUS_DATADIR", _dataDir);
-        Environment.SetEnvironmentVariable("HONUS_PSK_B64", PskB64);
-        Environment.SetEnvironmentVariable("HONUS_ADMIN_TOKEN", adminAuth ? AdminToken : null);  // null 清除 → 默认管理鉴权关
+        Environment.SetEnvironmentVariable("HORUS_DBPATH", ":memory:");
+        Environment.SetEnvironmentVariable("HORUS_DATADIR", _dataDir);
+        Environment.SetEnvironmentVariable("HORUS_PSK_B64", PskB64);
+        Environment.SetEnvironmentVariable("HORUS_ADMIN_TOKEN", adminAuth ? AdminToken : null);  // null 清除 → 默认管理鉴权关
+        Environment.SetEnvironmentVariable("HORUS_URLS", "http://127.0.0.1:0");                   // loopback → 不触发 fail-closed
     }
 
     /// 连接事件 WS,附带合法握手头。
@@ -35,7 +36,7 @@ public sealed class TestApp : WebApplicationFactory<Program>
     {
         WebSocketClient client = Server.CreateWebSocketClient();
         string auth = goodAuth ? Auth.Handshake(Psk, examId, seatId, agentId) : "deadbeef";
-        client.ConfigureRequest = req => req.Headers["X-Honus-Auth"] = auth;
+        client.ConfigureRequest = req => req.Headers["X-Horus-Auth"] = auth;
         var uri = new Uri($"ws://localhost/ingest/events?examId={examId}&seatId={seatId}&agentId={agentId}");
         return await client.ConnectAsync(uri, CancellationToken.None);
     }

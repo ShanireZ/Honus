@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace Honus.Contracts;
+namespace Horus.Contracts;
 
 /// 基础哈希 / HMAC 十六进制封装(小写)。
 public static class Crypto
@@ -16,13 +16,14 @@ public static class Crypto
         return Convert.ToHexString(h.ComputeHash(Encoding.UTF8.GetBytes(s))).ToLowerInvariant();
     }
 
-    /// 常量时间比较十六进制签名,避免计时侧信道。
-    public static bool FixedTimeEquals(string aHex, string bHex)
+    /// 常量时间比较(先各自 SHA256 到固定 32 字节再比,连**长度**都不泄漏)。用于签名 / 管理令牌。
+    public static bool FixedTimeEquals(string a, string b)
     {
-        if (aHex.Length != bHex.Length) return false;
-        int diff = 0;
-        for (int i = 0; i < aHex.Length; i++) diff |= aHex[i] ^ bHex[i];
-        return diff == 0;
+        Span<byte> ha = stackalloc byte[32];
+        Span<byte> hb = stackalloc byte[32];
+        SHA256.HashData(Encoding.UTF8.GetBytes(a), ha);
+        SHA256.HashData(Encoding.UTF8.GetBytes(b), hb);
+        return CryptographicOperations.FixedTimeEquals(ha, hb);
     }
 }
 
@@ -50,11 +51,11 @@ public static class EventCanonical
 /// 握手与图片通道的鉴权签名。见 api-contract §1.1 / §2.1。
 public static class Auth
 {
-    /// WebSocket 握手头 X-Honus-Auth = HMAC(PSK, examId|seatId|agentId)。
+    /// WebSocket 握手头 X-Horus-Auth = HMAC(PSK, examId|seatId|agentId)。
     public static string Handshake(byte[] psk, string examId, string seatId, string agentId)
         => Crypto.HmacHex(psk, $"{examId}|{seatId}|{agentId}");
 
-    /// 图片上传头 X-Honus-Sig = HMAC(PSK, canonicalHeaders + "\n" + sha256(body))。
+    /// 图片上传头 X-Horus-Sig = HMAC(PSK, canonicalHeaders + "\n" + sha256(body))。
     /// canonicalHeaders 采用固定顺序的 "key:value" 换行拼接(见 ImageCanonicalHeaders)。
     public static string ImageSig(byte[] psk, string canonicalHeaders, byte[] body)
     {
@@ -63,7 +64,7 @@ public static class Auth
     }
 
     /// 图片上传的规范化头串(两端必须一致)。顺序: exam, seat, agent, seq, trigger, phash, ts, imageId。
-    /// imageId = 客户端预生成 id(无则传 "");纳入签名防止 X-Honus-Image-Id 被篡改污染证据关联。
+    /// imageId = 客户端预生成 id(无则传 "");纳入签名防止 X-Horus-Image-Id 被篡改污染证据关联。
     public static string ImageCanonicalHeaders(
         string examId, string seatId, string agentId, long seq, string trigger, string phash, string ts, string imageId = "")
         => string.Join("\n", new[]

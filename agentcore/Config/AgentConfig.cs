@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Honus.Contracts;   // Json.Wire(线协议共享)
+using Horus.Contracts;   // Json.Wire(线协议共享)
 
-namespace Honus.Agent.Config;
+namespace Horus.Agent.Config;
 
 /// Agent 配置。从 JSON 加载(camelCase);PSK 为 base64 字符串,自动转 byte[]。
 public sealed class AgentConfig

@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using Honus.Agent.Model;
-using Honus.Contracts;
+using Horus.Agent.Model;
+using Horus.Contracts;
 
-namespace Honus.Agent.Signals;
+namespace Horus.Agent.Signals;
 
 /// 前台窗口标题 + 进程名。轮询(默认 1s)。
 /// TODO: 可改用 SetWinEventHook(EVENT_SYSTEM_FOREGROUND) 事件驱动以降开销(需消息循环)。

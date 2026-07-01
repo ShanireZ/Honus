@@ -1,10 +1,10 @@
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using Honus.Agent.Config;
-using Honus.Agent.Model;
-using Honus.Contracts;
+using Horus.Agent.Config;
+using Horus.Agent.Model;
+using Horus.Contracts;
 
-namespace Honus.Agent.Signals;
+namespace Horus.Agent.Signals;
 
 /// 剪贴板更新监听。大段粘贴(文本长度/行数超阈值)→ 高风险 + 触发抓图。
 /// 隐私:**默认只记元数据(长度/行数),不上传剪贴板明文**。
@@ -29,7 +29,7 @@ public sealed class ClipboardWatcher : ISignalSource
             AddClipboardFormatListener(_win.Handle);
             Application.Run();   // 在本 STA 线程跑消息泵
         })
-        { IsBackground = true, Name = "honus-clipboard" };
+        { IsBackground = true, Name = "horus-clipboard" };
         _thread.SetApartmentState(ApartmentState.STA);
         _thread.Start();
     }

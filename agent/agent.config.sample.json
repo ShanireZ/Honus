@@ -16,5 +16,5 @@
   "largePasteThreshold": 200,
 
   "whitelistHosts": ["judge.exam.lan", "oj.school.lan"],
-  "whitelistProcs": ["code", "devenv", "cl", "g++", "gcc", "mingw32-make", "explorer", "honus.agent"]
+  "whitelistProcs": ["code", "devenv", "cl", "g++", "gcc", "mingw32-make", "explorer", "horus.agent"]
 }

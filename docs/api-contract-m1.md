@@ -1,10 +1,10 @@
 # M1 接口契约 — Agent ↔ Server
 
-- 项目：**Honus** · 里程碑：M1（最小闭环）
+- 项目：**Horus** · 里程碑：M1（最小闭环）
 - 日期：2026-06-28
 - 关联：[architecture-v0.2.md](architecture-v0.2.md) · [../schema/schema.sql](../schema/schema.sql) · [../agent/](../agent/)
 
-本契约定义采集端 Agent 与监考服务器之间的两条通道，以及落库数据模型。字段命名与 `Honus.Agent` 代码、`schema.sql` 严格一致。
+本契约定义采集端 Agent 与监考服务器之间的两条通道，以及落库数据模型。字段命名与 `Horus.Agent` 代码、`schema.sql` 严格一致。
 
 ## 0. 通用约定
 
@@ -14,9 +14,9 @@
 - **序号 `seq`**：每个 Agent 维护单调递增计数器，事件与图片**共用**同一序号空间。服务器按 `(agentId, seq)` 幂等去重，支持断网续传重发。
 - **采集面鉴权 / 防篡改**：预共享密钥（PSK，每场考试或每 Agent 一把）。
   - 事件：每条带 `sig = HMAC-SHA256(PSK, hashSelf + "\n" + seq)`。
-  - 图片：HTTP 头带 `X-Honus-Sig = HMAC-SHA256(PSK, canonical(headers) + sha256(body))`；`canonical(headers)` 顺序 = exam, seat, agent, seq, trigger, phash, ts, **imageId**（含 `X-Honus-Image-Id` 防其被篡改污染证据关联）。
-  - 握手：WebSocket 连接时附 `X-Honus-Auth` 头（见 §1.1）。
-- **管理面鉴权**：所有 `/api/*`（看板读 + 管理写 + 图片字节）需带 `X-Honus-Admin: <管理令牌>` 头；图片字节端点（`<img>` 无法设头）额外接受 `?t=<令牌>` 查询。未配令牌则放行（仅联调）。**防止学员机调 `/api/exams/{id}/config` 下发白名单关掉全场检测、或拉取全班证据图、或抹除自己的可疑裁决。** 令牌与采集面 PSK 相互独立。
+  - 图片：HTTP 头带 `X-Horus-Sig = HMAC-SHA256(PSK, canonical(headers) + sha256(body))`；`canonical(headers)` 顺序 = exam, seat, agent, seq, trigger, phash, ts, **imageId**（含 `X-Horus-Image-Id` 防其被篡改污染证据关联）。
+  - 握手：WebSocket 连接时附 `X-Horus-Auth` 头（见 §1.1）。
+- **管理面鉴权**：所有 `/api/*`（看板读 + 管理写 + 图片字节）需带 `X-Horus-Admin: <管理令牌>` 头；图片字节端点（`<img>` 无法设头）额外接受 `?t=<令牌>` 查询。未配令牌则放行（仅联调）。**防止学员机调 `/api/exams/{id}/config` 下发白名单关掉全场检测、或拉取全班证据图、或抹除自己的可疑裁决。** 令牌与采集面 PSK 相互独立。
 
 ### 0.1 哈希链 canonical 规则（两端必须逐字节一致）
 `hashSelf = SHA256( hashPrev + "\n" + canonicalCore )`，其中 `canonicalCore` =
@@ -33,7 +33,7 @@ examId, seatId, agentId, machineId, ts, type, payload, risk, evidenceImageId, se
 ### 1.1 连接
 ```
 GET  ws://<server>:<port>/ingest/events?examId=E1&seatId=A07&agentId=ag-A07
-Header: X-Honus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
+Header: X-Horus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
 ```
 握手成功后，**Agent 首帧**发送 `hello`，**服务器**回 `hello_ack`（含服务器已知的最大 `seq`，用于 Agent 决定从哪续传）。
 
@@ -91,24 +91,24 @@ Header: X-Honus-Auth: <hex(HMAC-SHA256(PSK, examId+"|"+seatId+"|"+agentId))>
 ```
 POST http://<server>:<port>/ingest/images
 Content-Type: image/webp
-X-Honus-Exam:    E1
-X-Honus-Seat:    A07
-X-Honus-Agent:   ag-A07
-X-Honus-Seq:     1288
-X-Honus-Trigger: event:browser        // event:browser | event:paste | event:process | event:usb | baseline_random
-X-Honus-Phash:   9f3c1a22b0e4d7f1     // dHash 64bit, 16 hex
-X-Honus-Ts:      1750000000.456
-X-Honus-Sig:     <hex hmac>
-X-Honus-Image-Id: img_8f1c…           // 可选:客户端预生成 id(触发型抓图),服务器沿用
+X-Horus-Exam:    E1
+X-Horus-Seat:    A07
+X-Horus-Agent:   ag-A07
+X-Horus-Seq:     1288
+X-Horus-Trigger: event:browser        // event:browser | event:paste | event:process | event:usb | baseline_random
+X-Horus-Phash:   9f3c1a22b0e4d7f1     // dHash 64bit, 16 hex
+X-Horus-Ts:      1750000000.456
+X-Horus-Sig:     <hex hmac>
+X-Horus-Image-Id: img_8f1c…           // 可选:客户端预生成 id(触发型抓图),服务器沿用
 <body = WebP 字节>
 ```
 **响应 200**：
 ```jsonc
 { "stored": true, "imageId": "img_8f1c…", "duplicate": false, "ocrQueued": true }
 ```
-- `imageId`：默认服务器分配（uuid）。**若请求带合法 `X-Honus-Image-Id`（`img_` + ≤64 位字母数字），服务器沿用该 id**——用于**触发型抓图**：Agent 预生成 id，既写进随后那条事件的 `evidenceImageId`，又作为图片 id 上传；即使离线缓冲、断线重连后补传，事件与证据图仍以同一 id 关联不断。带客户端 id 的上传**跳过 pHash 去重**（尊重事件关联）；同 id 重传幂等（`duplicate:true`，不另存）。
+- `imageId`：默认服务器分配（uuid）。**若请求带合法 `X-Horus-Image-Id`（`img_` + ≤64 位字母数字），服务器沿用该 id**——用于**触发型抓图**：Agent 预生成 id，既写进随后那条事件的 `evidenceImageId`，又作为图片 id 上传；即使离线缓冲、断线重连后补传，事件与证据图仍以同一 id 关联不断。带客户端 id 的上传**跳过 pHash 去重**（尊重事件关联）；同 id 重传幂等（`duplicate:true`，不另存）。
 - `duplicate: true`：pHash 命中近重复（无客户端 id 时），或客户端 id 已存在（续传重发）；未另存原图，返回已存 imageId。
-- 未带 `X-Honus-Image-Id` 的（如随机基线抓图）走服务器分配 + pHash 去重。
+- 未带 `X-Horus-Image-Id` 的（如随机基线抓图）走服务器分配 + pHash 去重。
 - 原图按 `images/<examId>/<seatId>/<imageId>.webp` 存文件系统；DB 只存指针（见 §4 `images`）。
 
 ### 2.2 击键节奏上报（判题网页前端 → 服务器，旁路）
@@ -160,7 +160,7 @@ Content-Type: application/json
 - `suspicious_queue.refs` = JSON 数组，引用 `events.id` / `images.image_id`，是归档"关键数据"的判据之一。
 
 ## 5. M1 服务器最小职责清单
-1. 起 WS `/ingest/events` 与 HTTP `/ingest/images`、`/ingest/keystroke`，校验 `X-Honus-Auth` / `sig`。
+1. 起 WS `/ingest/events` 与 HTTP `/ingest/images`、`/ingest/keystroke`，校验 `X-Horus-Auth` / `sig`。
 2. 落库到 `events` / `images`（含 `(agent_id, seq)` 幂等去重），原图存盘。
 3. L1 已在 Agent 完成；服务器对 `risk ≥ 阈值` 的事件写 `suspicious_queue`。
 4. 简易看板：座位在线（心跳）+ 可疑队列列表 + 点开看证据图与时间线。

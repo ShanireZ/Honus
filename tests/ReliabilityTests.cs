@@ -1,19 +1,19 @@
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
-using Honus.Agent.Buffer;
-using Honus.Agent.Config;
-using Honus.Agent.Transport;
-using Honus.Contracts;
+using Horus.Agent.Buffer;
+using Horus.Agent.Config;
+using Horus.Agent.Transport;
+using Horus.Contracts;
 using Xunit;
 
-namespace Honus.Server.Tests;
+namespace Horus.Server.Tests;
 
 /// LocalBuffer 纯逻辑单测(入队 / 快照 / 压实 / 图片增删)。
 public class LocalBufferTests
 {
     private static string TempDir()
-        => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "honus-buf-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-buf-" + Guid.NewGuid().ToString("N")[..10])).FullName;
 
     [Fact]
     public async Task 事件_入队_快照升序_逐条精确删除不误删()
@@ -37,6 +37,29 @@ public class LocalBufferTests
             Assert.Equal(2, snap2.Count);
             Assert.Equal(1, snap2[0].seq);
             Assert.Equal(3, snap2[1].seq);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public async Task 事件_逐条ack攒批压实_快照排除已确认()
+    {
+        string dir = TempDir();
+        try
+        {
+            var b = new LocalBuffer(dir);
+            for (long seq = 1; seq <= 10; seq++) await b.EnqueueEventAsync(seq, "{\"s\":" + seq + "}");
+
+            b.RemoveEvent(3);
+            b.RemoveEvent(7);   // 未到压实阈值,文件未重写,但快照须排除已确认的
+            var snap = b.SnapshotPendingEvents();
+            Assert.Equal(8, snap.Count);
+            Assert.DoesNotContain(snap, x => x.seq == 3 || x.seq == 7);
+
+            b.Compact();        // 强制压实后仍一致
+            var snap2 = b.SnapshotPendingEvents();
+            Assert.Equal(8, snap2.Count);
+            Assert.DoesNotContain(snap2, x => x.seq == 3 || x.seq == 7);
         }
         finally { Directory.Delete(dir, true); }
     }
@@ -153,7 +176,7 @@ public class ReconnectTests
         {
             var client = app.Server.CreateWebSocketClient();
             string auth = Auth.Handshake(TestApp.Psk, Exam, Seat, Agent);
-            client.ConfigureRequest = req => req.Headers["X-Honus-Auth"] = auth;
+            client.ConfigureRequest = req => req.Headers["X-Horus-Auth"] = auth;
             return await client.ConnectAsync(uri, ct);
         };
 
@@ -167,7 +190,7 @@ public class ReconnectTests
         HttpClient http = app.CreateClient();
         await CreateExamAsync(http);
 
-        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "honus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
         try
         {
             var buffer = new LocalBuffer(dir);
@@ -199,7 +222,7 @@ public class ReconnectTests
         HttpClient http = app.CreateClient();
         await CreateExamAsync(http);
 
-        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "honus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
         try
         {
             var buffer = new LocalBuffer(dir);
@@ -211,7 +234,7 @@ public class ReconnectTests
             {
                 var client = app.Server.CreateWebSocketClient();
                 string auth = Auth.Handshake(TestApp.Psk, Exam, Seat, Agent);
-                client.ConfigureRequest = req => req.Headers["X-Honus-Auth"] = auth;
+                client.ConfigureRequest = req => req.Headers["X-Horus-Auth"] = auth;
                 WebSocket ws = await client.ConnectAsync(uri, ct);
                 if (Interlocked.Increment(ref connectCount) == 1) first = ws;
                 return ws;
@@ -253,7 +276,7 @@ public class ReconnectTests
         HttpClient http = app.CreateClient();
         await CreateExamAsync(http);
 
-        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "honus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
         try
         {
             var buffer = new LocalBuffer(dir);
@@ -301,7 +324,7 @@ public class ReconnectTests
         HttpClient http = app.CreateClient();
         await CreateExamAsync(http);
 
-        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "honus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-rc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
         try
         {
             var buffer = new LocalBuffer(dir);
@@ -353,7 +376,7 @@ public class TriggerMapTests
     [InlineData("usb_insert", "event:usb")]
     [InlineData("capture_now", "event:manual")]
     public void ToContract_映射到契约取值(string reason, string expected)
-        => Assert.Equal(expected, Honus.Agent.Transport.TriggerMap.ToContract(reason));
+        => Assert.Equal(expected, Horus.Agent.Transport.TriggerMap.ToContract(reason));
 }
 
 /// Schema 应用健壮性:注释里的分号不能劈裂 DDL(F5 回归)。
@@ -362,7 +385,7 @@ public class SchemaTests
     [Fact]
     public void 建表_注释含分号不劈裂_关键表齐全()
     {
-        using var db = new Honus.Server.Data.Db(":memory:");
+        using var db = new Horus.Server.Data.Db(":memory:");
         foreach (string table in new[] { "exams", "seats", "events", "images", "ocr_results", "logo_hits", "keystroke_samples", "suspicious_queue", "agent_heartbeats" })
         {
             bool exists = db.Locked(conn =>
@@ -415,6 +438,54 @@ public class LiveConfigTests
         Assert.Equal(100, live.WebpQuality);                    // clamp 到 1..100
         Assert.True(live.BaselineMinSeconds <= live.BaselineMaxSeconds);  // min/max 自动纠正
     }
+
+    [Fact]
+    public void Apply_只下发min_不篡改未下发的max()
+    {
+        var live = new LiveConfig(Base());   // min=30, max=90
+        live.Apply(JsonDocument.Parse("{\"baselineMinSeconds\":120}").RootElement);  // 只下发 min
+        Assert.Equal(90, live.BaselineMaxSeconds);              // max 未被篡改(旧代码会变成 120)
+        Assert.True(live.BaselineMinSeconds <= live.BaselineMaxSeconds);
+    }
+}
+
+/// fail-closed:非 loopback 绑定却缺凭证时拒绝启动(S2 回归)。
+public class FailClosedTests
+{
+    [Fact]
+    public void 非loopback绑定缺管理令牌_拒绝启动()
+    {
+        string dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-fc-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+        try
+        {
+            Environment.SetEnvironmentVariable("HORUS_DBPATH", ":memory:");
+            Environment.SetEnvironmentVariable("HORUS_DATADIR", dir);
+            Environment.SetEnvironmentVariable("HORUS_PSK_B64", TestApp.PskB64);   // 有 PSK
+            Environment.SetEnvironmentVariable("HORUS_ADMIN_TOKEN", null);         // 但缺管理令牌
+            Environment.SetEnvironmentVariable("HORUS_URLS", "http://0.0.0.0:5199"); // 非 loopback
+
+            using var f = new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>();
+            Assert.ThrowsAny<Exception>(() => f.CreateClient());   // fail-closed:构建即抛
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HORUS_URLS", "http://127.0.0.1:0");   // 复位,勿污染后续
+            Directory.Delete(dir, true);
+        }
+    }
+}
+
+/// 常量时间比较(FixedTimeEquals)——含长度不泄漏(S1 回归)。
+public class CryptoCompareTests
+{
+    [Theory]
+    [InlineData("abc", "abc", true)]
+    [InlineData("abc", "abd", false)]
+    [InlineData("abc", "abcd", false)]   // 不同长度也返回 false
+    [InlineData("", "", true)]
+    [InlineData("", "x", false)]
+    public void FixedTimeEquals(string a, string b, bool expected)
+        => Assert.Equal(expected, Horus.Contracts.Crypto.FixedTimeEquals(a, b));
 }
 
 /// 可切换失败的 HTTP 处理器:Fail=true 时抛异常(模拟图片通道离线),否则转发到内层(TestServer)。

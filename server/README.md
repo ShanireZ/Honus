@@ -1,7 +1,7 @@
-# Honus.Server — 监考服务器（M1）
+# Horus.Server — 监考服务器（M1）
 
 接收采集端上报（WebSocket 事件 + HTTP 图片/击键）→ 落库（SQLite + 文件系统）→ 简易 Web 看板。
-与 Agent 同为 .NET 8，经 [`Honus.Contracts`](../contracts/) 共享线协议 / HMAC canonical，**哈希签名两端逐字节一致**。
+与 Agent 同为 .NET 8，经 [`Horus.Contracts`](../contracts/) 共享线协议 / HMAC canonical，**哈希签名两端逐字节一致**。
 
 > 权威设计见 [../docs/architecture-v0.2.md](../docs/architecture-v0.2.md)，接口契约见 [../docs/api-contract-m1.md](../docs/api-contract-m1.md)。
 
@@ -10,8 +10,8 @@
 
 ## 构建 / 测试
 ```bash
-dotnet build ../Honus.sln -c Debug     # 全量(含 Agent，走 net8.0-windows)
-dotnet test  ../Honus.sln -c Debug     # 端到端测试(10 项)
+dotnet build ../Horus.sln -c Debug     # 全量(含 Agent，走 net8.0-windows)
+dotnet test  ../Horus.sln -c Debug     # 端到端测试(10 项)
 ```
 
 ## 运行
@@ -28,16 +28,16 @@ dotnet run -c Debug                                # 或运行已发布 exe
 | `dataDir` | 数据根目录（SQLite 文件 + 截图原图都在此下） |
 | `dbPath` | SQLite 文件；`:memory:` 走内存（测试） |
 | `pskBase64` | 采集面预共享 HMAC 密钥（base64），**与各 Agent 一致**。留空=关闭验签（仅联调） |
-| `adminToken` | 管理/看板令牌。`/api/*` 需带 `X-Honus-Admin` 头（图片字节可用 `?t=`）。留空=关闭管理鉴权（仅联调）。**生产必配**，防学员机下发配置关检测/拉证据图/抹裁决 |
+| `adminToken` | 管理/看板令牌。`/api/*` 需带 `X-Horus-Admin` 头（图片字节可用 `?t=`）。留空=关闭管理鉴权（仅联调）。**生产必配**，防学员机下发配置关检测/拉证据图/抹裁决 |
 | `riskThreshold` | 事件 risk ≥ 此值入可疑队列（默认 50） |
 | `onlineWindowSeconds` / `recentRiskWindowSeconds` | 座位在线判定 / 热力风险统计窗口 |
 
-环境变量可覆盖配置（便于测试/部署）：`HONUS_CONFIG` `HONUS_DATADIR` `HONUS_DBPATH` `HONUS_PSK_B64` `HONUS_ADMIN_TOKEN` `HONUS_URLS`。
+环境变量可覆盖配置（便于测试/部署）：`HORUS_CONFIG` `HORUS_DATADIR` `HORUS_DBPATH` `HORUS_PSK_B64` `HORUS_ADMIN_TOKEN` `HORUS_URLS`。
 
 ## 端点
 **采集端（Agent ↔ Server）**
-- `GET  /ingest/events`（WebSocket）— 握手校验 `X-Honus-Auth`；每事件校验 `sig`；幂等落库 `(agent_id,seq,type)`；risk≥阈值入可疑队列。
-- `POST /ingest/images` — 校验 `X-Honus-Sig`；pHash 去重；原图存 `dataDir/images/<exam>/<seat>/<id>.webp`。
+- `GET  /ingest/events`（WebSocket）— 握手校验 `X-Horus-Auth`；每事件校验 `sig`；幂等落库 `(agent_id,seq,type)`；risk≥阈值入可疑队列。
+- `POST /ingest/images` — 校验 `X-Horus-Sig`；pHash 去重；原图存 `dataDir/images/<exam>/<seat>/<id>.webp`。
 - `POST /ingest/keystroke` — 判题前端旁路，击键节奏落库 + 基础风险初判。
 
 **看板 / 复核（只读 + 写）**

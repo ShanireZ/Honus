@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Honus.Server.Ingest;
+namespace Horus.Server.Ingest;
 
 /// 在线 Agent 连接注册表 + 每考试最新配置缓存。
 /// 用于向连接中的 Agent **推送 config_update**(热更新白名单/阈值/截图参数)等下行帧。

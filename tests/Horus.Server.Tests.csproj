@@ -17,9 +17,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\server\Honus.Server.csproj" />
-    <ProjectReference Include="..\contracts\Honus.Contracts.csproj" />
-    <ProjectReference Include="..\agentcore\Honus.Agent.Core.csproj" />
+    <ProjectReference Include="..\server\Horus.Server.csproj" />
+    <ProjectReference Include="..\contracts\Horus.Contracts.csproj" />
+    <ProjectReference Include="..\agentcore\Horus.Agent.Core.csproj" />
   </ItemGroup>
 
 </Project>

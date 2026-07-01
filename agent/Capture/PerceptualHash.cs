@@ -2,7 +2,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
-namespace Honus.Agent.Capture;
+namespace Horus.Agent.Capture;
 
 /// dHash:缩放到 9×8 灰度,逐行比较相邻像素 → 64 位指纹。汉明距离衡量相似度。
 public static class PerceptualHash

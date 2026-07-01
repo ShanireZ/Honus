@@ -1,9 +1,9 @@
 using System.Text.Json;
-using Honus.Server.Config;
-using Honus.Server.Data;
+using Horus.Server.Config;
+using Horus.Server.Data;
 using Microsoft.Data.Sqlite;
 
-namespace Honus.Server.Ingest;
+namespace Horus.Server.Ingest;
 
 /// 击键节奏旁路(HTTP POST /ingest/keystroke),来自判题网页前端,不经 Agent。见 api-contract §2.2。
 /// M1:落库 + 基础 risk 初判(整段粘贴 / 超人爆发 / 空窗后突现整段 → 可疑)。

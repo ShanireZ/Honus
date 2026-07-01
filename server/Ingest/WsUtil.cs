@@ -1,7 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 
-namespace Honus.Server.Ingest;
+namespace Horus.Server.Ingest;
 
 /// WebSocket 文本帧收发小工具。一条 JSON 一帧。
 public static class WsUtil

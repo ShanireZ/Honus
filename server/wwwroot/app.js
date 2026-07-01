@@ -1,5 +1,5 @@
 /* ============================================================
-   Honus 监考台 · 前端逻辑（vanilla JS，无框架/无构建/无外部依赖）
+   Horus 监考台 · 前端逻辑（vanilla JS，无框架/无构建/无外部依赖）
    消费已冻结的后端 API；?mock=1 或 window.USE_MOCK=true 走内置 mock。
    ============================================================ */
 (function () {
@@ -89,15 +89,15 @@
      管理令牌鉴权
      ------------------------------------------------------------
      冻结契约：
-       · 所有 /api/* 请求带 HTTP 头 X-Honus-Admin: <token>（GET/POST 皆然）。
+       · 所有 /api/* 请求带 HTTP 头 X-Horus-Admin: <token>（GET/POST 皆然）。
        · 图片字节端点 /api/images/{id} 无法设请求头，额外接受 ?t=<token>；
          /api/images/{id}/meta（JSON）仍走 api() + 头。
        · 令牌错误/缺失 → /api/* 返回 401。
        · 服务器未配置令牌（本地联调）时 /api/* 正常放行、不返回 401——
          所以逻辑是「遇到 401 才要令牌」，而非「无令牌就不发请求」。
-     令牌存 localStorage（key = honus_admin_token）。
+     令牌存 localStorage（key = horus_admin_token）。
      ============================================================ */
-  var TOKEN_KEY = "honus_admin_token";
+  var TOKEN_KEY = "horus_admin_token";
 
   function getToken() {
     try { return window.localStorage.getItem(TOKEN_KEY) || ""; }
@@ -144,7 +144,7 @@
     // 附带令牌头（有则带；无令牌时也照发——联调模式下服务器会放行，
     // 只有真配置了令牌的服务器才会因缺头/错头返回 401）。
     var tok = getToken();
-    if (tok) headers["X-Honus-Admin"] = tok;
+    if (tok) headers["X-Horus-Admin"] = tok;
 
     return fetch(path, {
       method: opts.method || "GET",

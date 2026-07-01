@@ -7,8 +7,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>Honus.Server</AssemblyName>
-    <RootNamespace>Honus.Server</RootNamespace>
+    <AssemblyName>Horus.Server</AssemblyName>
+    <RootNamespace>Horus.Server</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,7 +17,7 @@
 
   <ItemGroup>
     <!-- 共享线协议 / canonical / HMAC(与 Agent 共用,验签同源) -->
-    <ProjectReference Include="..\contracts\Honus.Contracts.csproj" />
+    <ProjectReference Include="..\contracts\Horus.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>
