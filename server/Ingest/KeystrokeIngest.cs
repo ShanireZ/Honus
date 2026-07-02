@@ -55,6 +55,8 @@ public sealed class KeystrokeIngest(Db db, ServerConfig cfg)
 
         long id = db.Locked(conn =>
         {
+            if (conn.IsExamSealed(examId)) return -1L;   // 归档中/已归档:短路不落库(避免归档窗口 late-ingest)
+
             // 幂等落库:同 (exam,seat,ts,submissionId) 已存在则不重插——防同网攻击者嗅到 HTTP 明文后
             // **原样重放**合法签名体(签名验得过但无去重键)灌可疑队列/DoS。签名防伪造/栽赃,幂等防重放。
             using SqliteCommand ins = conn.Cmd(

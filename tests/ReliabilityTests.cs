@@ -816,3 +816,48 @@ public class ConfigPersistenceTests
         finally { Directory.Delete(dir, true); }
     }
 }
+
+/// Schema 形状:vec0 虚表被跳过(否则 sqlite-vec 未加载会建表失败起不来)、核心表齐全、心跳 PK 含 seat 维。
+public class SchemaShapeTests
+{
+    [Fact]
+    public void 跳过vec0虚表_核心表齐全()
+    {
+        using var db = new Horus.Server.Data.Db(":memory:");
+        var tables = db.Read(conn =>
+        {
+            var set = new HashSet<string>();
+            using var c = conn.CreateCommand();
+            c.CommandText = "SELECT name FROM sqlite_master WHERE type='table'";
+            using var r = c.ExecuteReader();
+            while (r.Read()) set.Add(r.GetString(0));
+            return set;
+        });
+        Assert.DoesNotContain("vec_images", tables);   // sqlite-vec 未加载 → 跳过,不致 Apply 失败
+        foreach (string t in new[] { "exams", "seats", "events", "images", "ocr_results", "logo_hits",
+            "keystroke_samples", "suspicious_queue", "agent_heartbeats", "exam_config" })
+            Assert.Contains(t, tables);
+    }
+
+    [Fact]
+    public void 心跳PK含seat_同agent同ts不同seat两行并存()
+    {
+        using var db = new Horus.Server.Data.Db(":memory:");
+        db.Write(conn =>
+        {
+            foreach (string seat in new[] { "A01", "A02" })
+            {
+                using var c = conn.CreateCommand();
+                c.CommandText = $"INSERT INTO agent_heartbeats (agent_id,exam_id,seat_id,ts,status) VALUES ('ag','E1','{seat}',100.0,'alive')";
+                c.ExecuteNonQuery();
+            }
+        });
+        long n = db.Read(conn =>
+        {
+            using var c = conn.CreateCommand();
+            c.CommandText = "SELECT COUNT(*) FROM agent_heartbeats";
+            return Convert.ToInt64(c.ExecuteScalar());
+        });
+        Assert.Equal(2, n);   // 旧 PK(agent_id,ts) 会 UPSERT 覆盖成 1 行;新 PK 含 seat → 两行并存,在线判定不错位
+    }
+}

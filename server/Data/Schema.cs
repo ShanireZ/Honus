@@ -48,6 +48,32 @@ public static class Schema
     {
         AddColumnIfMissing(conn, "events", "server_risk", "INTEGER");   // M2:服务器侧风险复判
         AddColumnIfMissing(conn, "events", "machine_id", "TEXT");       // M3:落 machineId 以支持哈希链离线复验
+        MigrateHeartbeatPk(conn);                                       // 心跳 PK 补 exam/seat 维(旧库重建·心跳短暂可弃)
+    }
+
+    /// 旧 PK=(agent_id, ts) → 新 PK=(exam_id, seat_id, agent_id, ts)。心跳是 ~90s 窗口的在线指示、且归档时清理,
+    /// 丢弃旧行至多损失几分钟"谁在线"(每 30s 自愈),故迁移直接 DROP+重建(CREATE IF NOT EXISTS 只对新库建了新 PK)。
+    private static void MigrateHeartbeatPk(SqliteConnection conn)
+    {
+        // 检测:旧表里 exam_id 不在 PK(pk=0)→ 需迁移;新表 exam_id 在 PK(pk>0)→ 跳过。
+        bool needMigrate;
+        using (SqliteCommand q = conn.CreateCommand())
+        {
+            q.CommandText = "SELECT pk FROM pragma_table_info('agent_heartbeats') WHERE name='exam_id'";
+            object? pk = q.ExecuteScalar();
+            needMigrate = pk is not null && Convert.ToInt64(pk) == 0;
+        }
+        if (!needMigrate) return;
+
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText =
+            @"DROP TABLE agent_heartbeats;
+              CREATE TABLE agent_heartbeats (
+                agent_id TEXT NOT NULL, exam_id TEXT NOT NULL, seat_id TEXT NOT NULL,
+                ts REAL NOT NULL, status TEXT NOT NULL,
+                PRIMARY KEY (exam_id, seat_id, agent_id, ts));
+              CREATE INDEX IF NOT EXISTS ix_hb_exam_ts ON agent_heartbeats(exam_id, ts);";
+        cmd.ExecuteNonQuery();
     }
 
     private static void AddColumnIfMissing(SqliteConnection conn, string table, string column, string decl)

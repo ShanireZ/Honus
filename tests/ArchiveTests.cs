@@ -4,10 +4,12 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Horus.Contracts;
+using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Jobs;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Horus.Server.Tests;
@@ -252,5 +254,89 @@ public class ArchiveTests
         ArchiveService.Report r2 = archive.RunOnce(now);
         Assert.Equal(0, r2.Scanned);
         Assert.Equal(0, r2.Archived);
+    }
+}
+
+/// 文件库归档(非 :memory:):走真只读连接池 + 真 VACUUM + 冷存文件移动。既有 ArchiveTests 全 :memory: 回退单连接,
+/// 此类补文件库端到端盲区(含墓碑 'archiving' 态崩溃续跑)。
+public class FileDbArchiveTests
+{
+    private const double Day = 86400.0;
+
+    private static string TempDir()
+        => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-farch-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+
+    private static ServerConfig Cfg() => new()
+    {
+        RetentionDays = 30, ArchiveCriticalRisk = 50, ArchiveDbPath = "arch.db", ArchiveEnabled = false,
+    };
+
+    private static void SeedEndedExam(Db db, string status, double endedAt)
+    {
+        db.Write(conn =>
+        {
+            using (SqliteCommand c = conn.Cmd(
+                "INSERT INTO exams (exam_id,name,status,started_at,ended_at,created_at) VALUES ('E1','x',@st,@s,@e,@s)",
+                ("@st", status), ("@s", endedAt), ("@e", endedAt))) c.ExecuteNonQuery();
+            using (SqliteCommand c = conn.Cmd("INSERT INTO seats (exam_id,seat_id,agent_id) VALUES ('E1','A01','ag')")) c.ExecuteNonQuery();
+            using (SqliteCommand c = conn.Cmd(
+                @"INSERT INTO events (exam_id,seat_id,agent_id,machine_id,seq,ts,recv_ts,type,payload,risk,server_risk,hash_self,sig)
+                  VALUES ('E1','A01','ag','PC',1,@ts,@ts,'browser_url','{""url"":""x""}',80,80,'h','s')", ("@ts", endedAt))) c.ExecuteNonQuery();
+        });
+    }
+
+    private static long OpenArchiveScalar(string archivePath, string sql)
+    {
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = archivePath, Pooling = false }.ToString());
+        conn.Open();
+        using SqliteCommand c = conn.CreateCommand();
+        c.CommandText = sql;
+        object? v = c.ExecuteScalar();
+        return v is null or DBNull ? 0 : Convert.ToInt64(v);
+    }
+
+    [Fact]
+    public void 文件库到龄归档_关键入档_live清空置archived_VACUUM不抛()
+    {
+        string dir = TempDir();
+        try
+        {
+            using var db = new Db(Path.Combine(dir, "live.db"));
+            var storage = new Storage(dir);
+            SeedEndedExam(db, "ended", 1000.0);
+
+            var svc = new ArchiveService(db, storage, Cfg(), NullLogger<ArchiveService>.Instance);
+            ArchiveService.Report report = svc.RunOnce(1000.0 + 40 * Day);
+
+            Assert.Equal(1, report.Archived);
+            long liveEvents = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT COUNT(*) FROM events WHERE exam_id='E1'"); return Convert.ToInt64(c.ExecuteScalar()); });
+            Assert.Equal(0, liveEvents);   // live 清空(且 VACUUM 已在文件库上跑过,未抛)
+            string status = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT status FROM exams WHERE exam_id='E1'"); return (string)c.ExecuteScalar()!; });
+            Assert.Equal("archived", status);
+            Assert.Equal(1, OpenArchiveScalar(Path.Combine(dir, "arch.db"), "SELECT COUNT(*) FROM archive_events"));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
+    public void 墓碑archiving态_崩溃续跑_收敛为archived()
+    {
+        // 模拟上次崩在归档中途:status='archiving' 且 live 数据仍在。候选查询含 'archiving' → 本次续跑跑完。
+        string dir = TempDir();
+        try
+        {
+            using var db = new Db(Path.Combine(dir, "live.db"));
+            var storage = new Storage(dir);
+            SeedEndedExam(db, "archiving", 1000.0);
+
+            var svc = new ArchiveService(db, storage, Cfg(), NullLogger<ArchiveService>.Instance);
+            ArchiveService.Report report = svc.RunOnce(1000.0 + 40 * Day);
+
+            Assert.Equal(1, report.Archived);   // 墓碑态被拾起续跑
+            string status = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT status FROM exams WHERE exam_id='E1'"); return (string)c.ExecuteScalar()!; });
+            Assert.Equal("archived", status);
+            Assert.Equal(1, OpenArchiveScalar(Path.Combine(dir, "arch.db"), "SELECT COUNT(*) FROM archive_events"));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
     }
 }

@@ -66,8 +66,9 @@ public sealed class ArchiveService : BackgroundService
             var candidates = _db.Read(conn =>
             {
                 var list = new List<string>();
+                // 含 'archiving':上次崩在归档中途的考试(墓碑态)本次续跑收敛。
                 using SqliteCommand c = conn.Cmd(
-                    "SELECT exam_id FROM exams WHERE status='ended' AND ended_at IS NOT NULL AND ended_at<@cut ORDER BY ended_at",
+                    "SELECT exam_id FROM exams WHERE status IN ('ended','archiving') AND ended_at IS NOT NULL AND ended_at<@cut ORDER BY ended_at",
                     ("@cut", cutoff));
                 using SqliteDataReader r = c.ExecuteReader();
                 while (r.Read()) list.Add(r.GetString(0));
@@ -104,16 +105,27 @@ public sealed class ArchiveService : BackgroundService
 
     private ExamResult ArchiveOneExam(string examId, double now)
     {
-        // ---- 门禁:仍有 pending 未裁决 → 跳过(不 purge 未决案证据)----
-        long pending = _db.Read(conn => Count(conn,
-            "SELECT COUNT(*) FROM suspicious_queue WHERE exam_id=@e AND status='pending'", ("@e", examId)));
-        if (pending > 0)
+        // ---- 门禁 + 墓碑(原子):pending 检查与 status→'archiving' 翻转在**同一写锁 body** 内完成。
+        // _db.Write 全程持 _writeGate,其它写者(含 vision)不能交错 → pending 检查后到翻转前无新 pending 混入。
+        // 翻转后所有 ingest 对本考试短路(IsExamSealed),消除"读快照→DELETE WHERE exam_id"之间的 late-ingest 窗口。
+        string gate = _db.Write(conn =>
         {
-            _log.LogWarning("考试 {Exam} 仍有 {N} 条待裁决,跳过归档(须先人工裁决)", examId, pending);
-            return new ExamResult(examId, "skipped", 0, 0, 0, 0, 0, $"pending={pending}");
+            long pending = Count(conn, "SELECT COUNT(*) FROM suspicious_queue WHERE exam_id=@e AND status='pending'", ("@e", examId));
+            if (pending > 0) return "pending:" + pending;   // 不翻转,留 'ended' 待人工裁决
+            using SqliteCommand up = conn.Cmd(
+                "UPDATE exams SET status='archiving' WHERE exam_id=@e AND status IN ('ended','archiving')", ("@e", examId));
+            return up.ExecuteNonQuery() > 0 ? "ok" : "gone";   // gone = 已被并发处理 / 非 ended
+        });
+        if (gate.StartsWith("pending:", StringComparison.Ordinal))
+        {
+            long n = long.Parse(gate.AsSpan("pending:".Length));
+            _log.LogWarning("考试 {Exam} 仍有 {N} 条待裁决,跳过归档(须先人工裁决)", examId, n);
+            return new ExamResult(examId, "skipped", 0, 0, 0, 0, 0, $"pending={n}");
         }
+        if (gate != "ok")
+            return new ExamResult(examId, "skipped", 0, 0, 0, 0, 0, "not_ended");
 
-        // ---- 读取阶段:确定关键集合 + 载入待复制数据 ----
+        // ---- 读取阶段:确定关键集合 + 载入待复制数据(此刻 status='archiving',ingest 已短路,快照稳定)----
         ExamSnapshot snap = _db.Read(conn => LoadSnapshot(conn, examId));
 
         // ---- 复制阶段:写入 archive 库(独立文件 + 事务)----

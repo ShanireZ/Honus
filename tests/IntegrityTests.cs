@@ -230,6 +230,31 @@ public class IntegrityTests
     }
 
     [Fact]
+    public async Task 归档中考试_事件被短路不落库_仍ack()
+    {
+        // #7:归档"读快照→DELETE WHERE exam_id"之间到达的 late-ingest 会被无锚点删。修=status='archiving' 后 ingest 短路。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        // 直接置 archiving(模拟归档进行中)
+        Db db = app.Services.GetRequiredService<Db>();
+        db.Write(conn =>
+        {
+            using SqliteCommand c = conn.Cmd("UPDATE exams SET status='archiving' WHERE exam_id=@e", ("@e", Exam));
+            Assert.Equal(1, c.ExecuteNonQuery());
+        });
+
+        using WebSocket ws = await app.ConnectEventsAsync(Exam, Seat, Agent);
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws);
+        await SendChainedAsync(ws, 1, "GENESIS");   // 内含 ack 断言:仍 ack(让 Agent 停发)
+
+        JsonElement events = await http.GetFromJsonAsync<JsonElement>($"/api/exams/{Exam}/events?seatId={Seat}");
+        Assert.Equal(0, events.GetArrayLength());   // 归档中:未落库(不会被随后的 DELETE 无锚点删)
+    }
+
+    [Fact]
     public async Task Agent重启后新链段_GENESIS锚点_不误报链断()
     {
         // #1:Agent 每次进程启动新建 HashChain,重启后首条 hash_prev=GENESIS,但 seq 续增。

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS exams (
   name         TEXT NOT NULL,
   started_at   REAL,                                  -- Unix 秒
   ended_at     REAL,
-  status       TEXT NOT NULL DEFAULT 'active',        -- active|ended|archived
+  status       TEXT NOT NULL DEFAULT 'active',        -- active|ended|archiving|archived（archiving=归档进行中,ingest 短路）
   created_at   REAL NOT NULL
 );
 
@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS agent_heartbeats (
   seat_id    TEXT NOT NULL,
   ts         REAL NOT NULL,
   status     TEXT NOT NULL,                           -- alive|degraded|...
-  PRIMARY KEY (agent_id, ts)
+  -- PK 含 exam/seat:同一 agent_id 换座复用 + 同毫秒 ts 时,不同 seat 的心跳不再撞同一行、seat 归属不被覆盖污染在线判定
+  PRIMARY KEY (exam_id, seat_id, agent_id, ts)
 );
 -- 看板在线判定按 (exam, ts>=cut) 查,否则全表扫心跳表
 CREATE INDEX IF NOT EXISTS ix_hb_exam_ts ON agent_heartbeats(exam_id, ts);

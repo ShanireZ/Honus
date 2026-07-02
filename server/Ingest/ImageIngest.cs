@@ -66,6 +66,13 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, Vision
             }
         }
 
+        // 归档中/已归档考试:短路不落库(避免归档窗口 late-ingest 被无锚点删 + 归档后重建孤儿图行)。
+        if (db.Read(conn => conn.IsExamSealed(examId)))
+        {
+            await ctx.Response.WriteAsJsonAsync(new { stored = false, error = "exam_sealed" });
+            return;
+        }
+
         // 客户端预生成 imageId(触发型抓图):幂等沿用,以保证"事件 ↔ 证据图"关联跨断线不断。
         bool hasClientId = IsValidImageId(clientId);
 

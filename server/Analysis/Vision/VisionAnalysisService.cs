@@ -78,8 +78,12 @@ public sealed class VisionAnalysisService : BackgroundService
                 var ids = _db.Read(conn =>
                 {
                     var list = new List<string>();
+                    // 排除归档中/已归档考试的图(不给归档窗口塞新分析结果 → 避免孤儿 pending)。
                     using SqliteCommand c = conn.Cmd(
-                        "SELECT image_id FROM images WHERE uploaded_to_ocr=0 AND trigger LIKE 'event:%' ORDER BY recv_ts LIMIT 500");
+                        @"SELECT i.image_id FROM images i JOIN exams e ON i.exam_id=e.exam_id
+                          WHERE i.uploaded_to_ocr=0 AND i.trigger LIKE 'event:%'
+                            AND e.status NOT IN ('archiving','archived')
+                          ORDER BY i.recv_ts LIMIT 500");
                     using SqliteDataReader r = c.ExecuteReader();
                     while (r.Read()) list.Add(r.GetString(0));
                     return list;
@@ -94,17 +98,19 @@ public sealed class VisionAnalysisService : BackgroundService
 
     private async Task AnalyzeOneAsync(string imageId, CancellationToken ct)
     {
-        // **原子占位**:UPDATE uploaded_to_ocr 0→1 抢到(rowcount=1)才分析,顺带取元数据 —— 单条写事务内完成,
-        // 杜绝"读→分析→写"跨 await 的 TOCTOU(重复分析 / 重复入可疑队列)。抢不到=已分析或正被别的执行流占用。
+        // **原子占位**:取元数据 → 查考试未封存 → UPDATE uploaded_to_ocr 0→1 抢到(rowcount=1)才分析 —— 同一写锁 body 内完成,
+        // 杜绝"读→分析→写"跨 await 的 TOCTOU(重复分析 / 重复入可疑队列),并对归档中/已归档考试短路(不塞孤儿分析)。
         ImgMeta? meta = _db.Write<ImgMeta?>(conn =>
         {
-            using (SqliteCommand claim = conn.Cmd(
-                "UPDATE images SET uploaded_to_ocr=1 WHERE image_id=@id AND uploaded_to_ocr=0", ("@id", imageId)))
-                if (claim.ExecuteNonQuery() == 0) return null;   // 已处理/占用 → 跳过
-            using SqliteCommand c = conn.Cmd(
-                "SELECT exam_id,seat_id,trigger,file_path FROM images WHERE image_id=@id", ("@id", imageId));
-            using SqliteDataReader r = c.ExecuteReader();
-            return r.Read() ? new ImgMeta(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3)) : null;
+            ImgMeta? m = null;
+            using (SqliteCommand c = conn.Cmd(
+                "SELECT exam_id,seat_id,trigger,file_path FROM images WHERE image_id=@id", ("@id", imageId)))
+            using (SqliteDataReader r = c.ExecuteReader())
+                if (r.Read()) m = new ImgMeta(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3));
+            if (m is null || conn.IsExamSealed(m.Exam)) return null;
+            using SqliteCommand claim = conn.Cmd(
+                "UPDATE images SET uploaded_to_ocr=1 WHERE image_id=@id AND uploaded_to_ocr=0", ("@id", imageId));
+            return claim.ExecuteNonQuery() > 0 ? m : null;   // 抢到才分析;抢不到=已分析/占用
         });
         if (meta is null) return;
 
@@ -122,6 +128,9 @@ public sealed class VisionAnalysisService : BackgroundService
         double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
         _db.Write(conn =>
         {
+            // 分析期间(await 云调用)考试可能已进入归档:此刻图行可能已被删,写结果会 FK 失败 / 造孤儿 pending → 短路。
+            if (conn.IsExamSealed(meta.Exam)) return;
+
             // 落 ocr_results(engine/text/hits/confidence);同图幂等
             using (SqliteCommand ins = conn.Cmd(
                 @"INSERT INTO ocr_results (image_id,engine,text,hits,confidence,created_at)

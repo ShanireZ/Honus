@@ -120,8 +120,10 @@ public sealed class UplinkClient : IAsyncDisposable
         foreach ((long seq, string? imageId, string trigger, ulong phash, byte[] webp) in _buffer.SnapshotPendingImages())
         {
             if (ct.IsCancellationRequested) return;
-            string? id = await PostImageAsync(webp, trigger, phash, seq, imageId, ct).ConfigureAwait(false);
-            if (id is not null) _buffer.RemoveImage(seq);          // 补传成功即删(同一 imageId → 事件关联不断)
+            (string? id, bool permanent) = await PostImageAsync(webp, trigger, phash, seq, imageId, ct).ConfigureAwait(false);
+            // 成功 → 删;**永久失败(4xx:签名错/过大/考试已封存)也删**,否则该坏图每次重连都重传、永久滞留占盘。
+            if (id is not null) _buffer.RemoveImage(seq);
+            else if (permanent) { _buffer.RemoveImage(seq); Console.Error.WriteLine($"[horus-agent] 图片补传被永久拒收(seq={seq}),丢弃"); }
         }
         foreach ((long _, string json) in _buffer.SnapshotPendingEvents())
         {
@@ -190,10 +192,12 @@ public sealed class UplinkClient : IAsyncDisposable
     {
         trigger = TriggerMap.ToContract(trigger);         // CaptureReason → 契约 trigger(否则落库脏值)
         string? clientId = trigger == "baseline_random" ? null : NewImageId();
-        string? confirmed = await PostImageAsync(webp, trigger, phash, seq, clientId, ct).ConfigureAwait(false);
+        (string? confirmed, bool permanent) = await PostImageAsync(webp, trigger, phash, seq, clientId, ct).ConfigureAwait(false);
         if (confirmed is null)
         {
-            await _buffer.EnqueueImageAsync(seq, clientId, trigger, phash, webp).ConfigureAwait(false);
+            // 永久失败(4xx)不缓冲(否则每次重连重传永远失败);仅**临时失败**(网络/5xx)落缓冲待续传。
+            if (!permanent)
+                await _buffer.EnqueueImageAsync(seq, clientId, trigger, phash, webp).ConfigureAwait(false);
             return clientId;   // 触发型返回预生成 id(事件关联);baseline 为 null
         }
         return confirmed;
@@ -202,8 +206,9 @@ public sealed class UplinkClient : IAsyncDisposable
     private static string NewImageId() => "img_" + Guid.NewGuid().ToString("N");
 
     /// 实际 HTTP 上传(含 X-Horus-Sig 签名;clientId 非空则带 X-Horus-Image-Id 由服务器沿用)。
-    /// 成功返回 imageId,失败返回 null(不落缓冲)。
-    private async Task<string?> PostImageAsync(byte[] webp, string trigger, ulong phash, long seq, string? clientId, CancellationToken ct)
+    /// 返回 (imageId, permanent):成功 → (id, false);**永久失败(4xx,除 408/429)→ (null, true) 应丢弃**;
+    /// 临时失败(5xx/408/429/网络/异常)→ (null, false) 应缓冲重试。
+    private async Task<(string? id, bool permanent)> PostImageAsync(byte[] webp, string trigger, ulong phash, long seq, string? clientId, CancellationToken ct)
     {
         try
         {
@@ -227,13 +232,18 @@ public sealed class UplinkClient : IAsyncDisposable
             if (clientId is not null) req.Headers.Add("X-Horus-Image-Id", clientId);   // 客户端预生成 id,服务器沿用
 
             using HttpResponseMessage resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
+            if (!resp.IsSuccessStatusCode)
+            {
+                int code = (int)resp.StatusCode;
+                bool permanent = code is >= 400 and < 500 and not 408 and not 429;   // 4xx(除超时/限流)= 永久拒收
+                return (null, permanent);
+            }
 
             await using Stream s = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             using JsonDocument doc = await JsonDocument.ParseAsync(s, cancellationToken: ct).ConfigureAwait(false);
-            return doc.RootElement.TryGetProperty("imageId", out JsonElement idEl) ? idEl.GetString() : null;
+            return (doc.RootElement.TryGetProperty("imageId", out JsonElement idEl) ? idEl.GetString() : null, false);
         }
-        catch { return null; }
+        catch { return (null, false); }   // 网络/取消/解析异常 = 临时,缓冲重试
     }
 
     // ---- 底层收发 ----
@@ -245,16 +255,21 @@ public sealed class UplinkClient : IAsyncDisposable
     }
 
     private const int MaxFrameBytes = 1 * 1024 * 1024;   // 单条下行消息上限 1MB
+    // 读超时:检测 TCP 半开(拔网线/AP 掉线/NAT 过期,ReceiveAsync 永挂不返回)。心跳每 30s → 服务器 ack 每 30s
+    // 喂给 receive,故健康连接下每次读远快于此;90s 无任何帧 = 连接已死,主动返回 null 触发重连。
+    private const int ReceiveTimeoutSeconds = 90;
 
     private static async Task<string?> ReceiveTextAsync(WebSocket ws, CancellationToken ct)
     {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(ReceiveTimeoutSeconds));
         var buf = new byte[16 * 1024];
         using var ms = new MemoryStream();
         while (true)
         {
             WebSocketReceiveResult r;
-            try { r = await ws.ReceiveAsync(buf, ct).ConfigureAwait(false); }
-            catch { return null; }
+            try { r = await ws.ReceiveAsync(buf, timeoutCts.Token).ConfigureAwait(false); }
+            catch { return null; }   // 断线 / 半开读超时 / 停机取消 → 视为断开(RunAsync 据 ct 决定重连或退出)
             if (r.MessageType == WebSocketMessageType.Close) return null;
             ms.Write(buf, 0, r.Count);
             if (ms.Length > MaxFrameBytes) return null;   // 超限 → 断开

@@ -364,7 +364,7 @@ public class IngestTests
     }
 
     [Fact]
-    public async Task 安全响应头_CSP与nosniff存在()
+    public async Task 安全响应头_CSP指令值到位_而非仅存在()
     {
         using var app = new TestApp();
         HttpClient http = app.CreateClient();
@@ -372,6 +372,13 @@ public class IngestTests
         Assert.True(r.Headers.Contains("Content-Security-Policy"), "缺 CSP 头");
         Assert.True(r.Headers.Contains("X-Content-Type-Options"), "缺 nosniff 头");
         Assert.True(r.Headers.Contains("X-Frame-Options"), "缺 X-Frame-Options 头");
+        // 断言 CSP **具体指令**(防有人误改成 unsafe-inline / 删关键收紧项而测试仍绿):
+        string csp = string.Join(" ", r.Headers.GetValues("Content-Security-Policy"));
+        Assert.Contains("script-src 'self'", csp);       // 脚本仅自身(内联/外链脚本被挡)
+        Assert.Contains("object-src 'none'", csp);
+        Assert.Contains("base-uri 'none'", csp);
+        Assert.Contains("frame-ancestors 'none'", csp);
+        Assert.DoesNotContain("script-src 'unsafe-inline'", csp);   // 绝不放开内联脚本
     }
 
     [Fact]

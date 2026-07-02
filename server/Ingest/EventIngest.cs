@@ -153,6 +153,9 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
 
         long? newId = db.Locked(conn =>
         {
+            // 归档中/已归档考试:短路不落库(避免"读快照→DELETE"窗口内的 late-ingest 被无锚点删)。仍会 ack 使 Agent 停发。
+            if (conn.IsExamSealed(examId)) return (long?)null;
+
             using SqliteCommand ins = conn.Cmd(
                 @"INSERT INTO events (exam_id,seat_id,agent_id,machine_id,seq,ts,recv_ts,type,payload,risk,server_risk,evidence_image_id,hash_prev,hash_self,sig)
                   VALUES (@exam,@seat,@agent,@machine,@seq,@ts,@recv,@type,@payload,@risk,@srisk,@ev,@hp,@hs,@sig)
@@ -181,7 +184,7 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
             {
                 string status = TryGetPayloadStr(payloadRaw, "status") ?? "alive";
                 using SqliteCommand hb = conn.Cmd(
-                    "INSERT INTO agent_heartbeats (agent_id,exam_id,seat_id,ts,status) VALUES (@a,@e,@s,@ts,@st) ON CONFLICT(agent_id,ts) DO UPDATE SET status=@st",
+                    "INSERT INTO agent_heartbeats (agent_id,exam_id,seat_id,ts,status) VALUES (@a,@e,@s,@ts,@st) ON CONFLICT(exam_id,seat_id,agent_id,ts) DO UPDATE SET status=@st",
                     ("@a", agentId), ("@e", examId), ("@s", seatId), ("@ts", ts), ("@st", status));
                 hb.ExecuteNonQuery();
             }

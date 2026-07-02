@@ -117,4 +117,13 @@ public static class DbExtensions
             c.Parameters.AddWithValue(name, val ?? DBNull.Value);
         return c;
     }
+
+    /// 该考试是否正在归档 / 已归档(`archiving`/`archived`)——归档窗口内 ingest 应短路,
+    /// 否则"读快照→DELETE WHERE exam_id"之间到达的新数据会被无锚点删掉(闭合 architecture §13.2 late-ingest 竞态)。
+    /// 未建考试(status=null)/active/ended 均放行(不改既有 ingest 行为)。
+    public static bool IsExamSealed(this SqliteConnection conn, string examId)
+    {
+        using SqliteCommand c = conn.Cmd("SELECT status FROM exams WHERE exam_id=@e", ("@e", examId));
+        return c.ExecuteScalar() as string is "archiving" or "archived";
+    }
 }
