@@ -228,4 +228,68 @@ public class IntegrityTests
         Assert.Equal(1, breaks.GetArrayLength());
         Assert.Equal(3, breaks[0].GetProperty("seq").GetInt64());
     }
+
+    [Fact]
+    public async Task Agent重启后新链段_GENESIS锚点_不误报链断()
+    {
+        // #1:Agent 每次进程启动新建 HashChain,重启后首条 hash_prev=GENESIS,但 seq 续增。
+        // 审计应把它认作**重启锚点**(合法段起点),而非删除/插入的 continuityBreak。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        using WebSocket ws = await app.ConnectEventsAsync(Exam, Seat, Agent);
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws);
+        string h1 = await SendChainedAsync(ws, 1, "GENESIS");
+        await SendChainedAsync(ws, 2, h1);
+        await SendChainedAsync(ws, 3, "GENESIS");   // 模拟重启:seq 续到 3,新链段从 GENESIS 起
+
+        JsonElement rep = await http.GetFromJsonAsync<JsonElement>($"/api/exams/{Exam}/integrity");
+        Assert.True(rep.GetProperty("ok").GetBoolean());                       // 重启不是篡改
+        Assert.Equal(1, rep.GetProperty("totalRestartBoundaries").GetInt32());
+        JsonElement agent = rep.GetProperty("agents")[0];
+        Assert.Equal(0, agent.GetProperty("continuityBreaks").GetArrayLength());   // 关键:不误报链断
+        Assert.Equal(1, agent.GetProperty("restartBoundaries").GetInt32());
+    }
+
+    [Fact]
+    public async Task 落库后改payload并重算hashSelf但无PSK重签_审计凭sig识破()
+    {
+        // #1 连带:hash_self 是无密钥 SHA256,非 PSK 篡改者改 payload 后可重算使①自洽;
+        // 唯 sig(HMAC-PSK)能识破。验证审计补的 sig 校验能抓到"hashSelf 自洽但 sig 不符"。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        using WebSocket ws = await app.ConnectEventsAsync(Exam, Seat, Agent);
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws);
+        await SendChainedAsync(ws, 1, "GENESIS");
+
+        // 攻击者(无 PSK):改 payload 为 P',重算 hash_self'(无密钥 SHA256)使锚点自洽;sig 仍绑旧 hash_self。
+        var core2 = new AgentEvent
+        {
+            ExamId = Exam, SeatId = Seat, AgentId = Agent, MachineId = Machine,
+            Ts = 1750000000.0 + 1, Type = SignalType.WindowFocus,
+            Payload = new() { ["title"] = "forged" }, Risk = 0, Seq = 1,
+        };
+        string hs2 = EventCanonical.HashSelf("GENESIS", core2, 1);
+        Db db = app.Services.GetRequiredService<Db>();
+        db.Write(conn =>
+        {
+            using SqliteCommand c = conn.Cmd(
+                "UPDATE events SET payload=@p, hash_self=@h WHERE exam_id=@e AND seq=1",
+                ("@p", "{\"title\":\"forged\"}"), ("@h", hs2), ("@e", Exam));
+            Assert.Equal(1, c.ExecuteNonQuery());
+        });
+
+        JsonElement rep = await http.GetFromJsonAsync<JsonElement>($"/api/exams/{Exam}/integrity");
+        Assert.False(rep.GetProperty("ok").GetBoolean());
+        JsonElement agent = rep.GetProperty("agents")[0];
+        JsonElement mism = agent.GetProperty("hashMismatches");
+        Assert.Equal(1, mism.GetArrayLength());                            // hashSelf 自洽,但 sig 校验失败
+        Assert.Contains("sig", mism[0].GetProperty("detail").GetString());
+        Assert.Equal(0, agent.GetProperty("continuityBreaks").GetArrayLength());
+    }
 }

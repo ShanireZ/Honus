@@ -733,6 +733,49 @@ public class VisionImagePrepTests
     }
 }
 
+/// 视觉返回 JSON 的健壮解析:confidence/suspicious 容忍供应商多种表述,**绝不误归零致漏报**(#2)。
+public class VisionVerdictParseTests
+{
+    private static Horus.Server.Analysis.Vision.VisionVerdict P(string json)
+    {
+        var v = Horus.Server.Analysis.Vision.OpenAiCompatibleVisionAnalyzer.Parse(json);
+        Assert.NotNull(v);
+        return v!;
+    }
+
+    [Fact]
+    public void confidence_整数()
+        => Assert.Equal(95, P("{\"suspicious\":true,\"category\":\"web_ai\",\"confidence\":95}").Confidence);
+
+    [Fact]
+    public void confidence_小数被截前归零_现正确取整()   // 回归:TryGetInt32 对 95.0 返回 false → 曾归零漏报
+        => Assert.Equal(95, P("{\"suspicious\":true,\"confidence\":95.0}").Confidence);
+
+    [Fact]
+    public void confidence_字符串数字()
+        => Assert.Equal(88, P("{\"suspicious\":true,\"confidence\":\"88\"}").Confidence);
+
+    [Fact]
+    public void confidence_0到1概率_放大到百分比()
+        => Assert.Equal(90, P("{\"suspicious\":true,\"confidence\":0.9}").Confidence);
+
+    [Fact]
+    public void suspicious_字符串true_被识别为真()   // 回归:曾只认 JsonValueKind.True
+        => Assert.True(P("{\"suspicious\":\"true\",\"confidence\":80}").Suspicious);
+
+    [Fact]
+    public void suspicious_false_保持假()
+        => Assert.False(P("{\"suspicious\":false,\"confidence\":40}").Suspicious);
+
+    [Fact]
+    public void 容忍代码块围栏与前后噪声()
+    {
+        var v = P("这是分析结果:\n```json\n{\"suspicious\":true,\"confidence\":70}\n```\n完毕");
+        Assert.Equal(70, v.Confidence);
+        Assert.True(v.Suspicious);
+    }
+}
+
 /// 可切换失败的 HTTP 处理器:Fail=true 时抛异常(模拟图片通道离线),否则转发到内层(TestServer)。
 public sealed class ToggleFailHandler : DelegatingHandler
 {
@@ -740,4 +783,36 @@ public sealed class ToggleFailHandler : DelegatingHandler
     public ToggleFailHandler(HttpMessageHandler inner) : base(inner) { }
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         => Fail ? throw new HttpRequestException("simulated offline") : base.SendAsync(request, ct);
+}
+
+/// #10:下发的每考试配置持久化到 exam_config,服务器重启后回填内存缓存(白名单不丢 → server_risk 复判不退化)。
+public class ConfigPersistenceTests
+{
+    private static string TempDbDir()
+        => Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "horus-cfg-" + Guid.NewGuid().ToString("N")[..10])).FullName;
+
+    [Fact]
+    public async Task 下发配置落库_新AgentHub重启回填()
+    {
+        string dir = TempDbDir();
+        try
+        {
+            string dbPath = Path.Combine(dir, "t.db");
+            const string cfgJson = "{\"whitelistHosts\":[\"judge.exam.cn\"],\"largePasteThreshold\":150}";
+            using (var db = new Horus.Server.Data.Db(dbPath))
+            {
+                var hub = new Horus.Server.Ingest.AgentHub(db);
+                Assert.Null(hub.GetConfig("E1"));                       // 初始无
+                await hub.PushConfigAsync("E1", cfgJson, default);       // 下发 → 落库
+                Assert.Equal(cfgJson, hub.GetConfig("E1"));
+            }
+            // 模拟服务器重启:同一 DB 文件 + 全新 AgentHub
+            using (var db2 = new Horus.Server.Data.Db(dbPath))
+            {
+                var hub2 = new Horus.Server.Ingest.AgentHub(db2);
+                Assert.Equal(cfgJson, hub2.GetConfig("E1"));            // 重启后回填,白名单不丢
+            }
+        }
+        finally { Directory.Delete(dir, true); }
+    }
 }
