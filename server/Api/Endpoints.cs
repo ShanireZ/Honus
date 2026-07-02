@@ -197,9 +197,21 @@ public static class Endpoints
         });
 
         // ---- 哈希链完整性审计(M3):离线复验锚点自洽 + 链连续。只对未归档(live)考试有意义。 ----
-        // 管理鉴权已由全局 /api gate 覆盖。返回 { ok, totalEvents, totalHashOk, totalChainOk, agents:[…] }。
+        // 管理鉴权已由全局 /api gate 覆盖。返回 { ok, totalEvents, totalHashOk, totalChainOk, totalUnverifiable, agents:[…] }。
+        // 已归档考试 live 事件已清空(整链因清理而断,§13.2)→ 不返回伪装"全绿"的空报告,而是明确 applicable:false。
         app.MapGet("/api/exams/{examId}/integrity", (string examId) =>
-            db.Read(conn => Results.Json(IntegrityAudit.Run(conn, examId))));
+            db.Read(conn =>
+            {
+                string? status = Scalar<string?>(conn, "SELECT status FROM exams WHERE exam_id=@e", ("@e", examId));
+                if (status is null) return Results.NotFound(new { error = "no_such_exam" });
+                if (status == "archived")
+                    return Results.Json(new
+                    {
+                        examId, status = "archived", applicable = false,
+                        note = "已归档:关键事件的 hash_self/sig 锚点在 archive 库,整链已因清理而断,不再做 live 连续性审计(见 §13.2)",
+                    });
+                return Results.Json(IntegrityAudit.Run(conn, examId));
+            }));
 
         // ---- 证据图字节 ----
         app.MapGet("/api/images/{imageId}", async (string imageId, HttpContext ctx) =>
