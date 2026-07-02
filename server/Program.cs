@@ -143,6 +143,23 @@ if (cfg.OidcEnabled)
         sp.GetRequiredService<ILogger<Horus.Server.Identity.OidcExchange>>()));
 }
 
+// ---- M4·RBAC:监考员看板 OIDC 登录(cpplearn dashboard web client·取代静态 adminToken)。AdminAuthMode=oidc 时启用 ----
+builder.Services.AddSingleton<Horus.Server.Identity.AdminSessionStore>();   // gate 校验管理会话(oidc 模式)
+if (cfg.DashboardOidcEnabled)
+{
+    if (string.IsNullOrEmpty(cfg.OidcIssuer)) throw new InvalidOperationException("adminAuthMode=oidc 需配 oidcIssuer");
+    string dashClientId = cfg.OidcDashboardClientId ?? throw new InvalidOperationException("adminAuthMode=oidc 需配 oidcDashboardClientId");
+    if (string.IsNullOrEmpty(cfg.OidcDashboardRedirectUri))
+        throw new InvalidOperationException("adminAuthMode=oidc 需配 oidcDashboardRedirectUri(须与 cpplearn 注册的一致,如 https://<服务器>/cb)");
+    string dashSecret = Horus.Server.Identity.OidcSecret.ResolveDashboard(cfg);
+    string dashJwks = await Horus.Server.Identity.OidcJwks.LoadAsync(cfg);           // 与采集面共用 issuer 的 JWKS
+    var dashValidator = new Horus.Server.Identity.OidcTokenValidator(dashJwks, cfg.OidcIssuer!, dashClientId);   // aud=dashboard client
+    builder.Services.AddSingleton(sp => new Horus.Server.Identity.AdminOidcFlow(
+        new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, dashValidator,
+        sp.GetRequiredService<Horus.Server.Identity.AdminSessionStore>(), cfg, dashSecret,
+        sp.GetRequiredService<ILogger<Horus.Server.Identity.AdminOidcFlow>>()));
+}
+
 // ---- M3 归档 / 清理作业:每日扫描到龄考试转 archive 库 + 清理 live(§13/§15)。ArchiveEnabled=false 时不起后台 ----
 builder.Services.AddSingleton<ArchiveService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ArchiveService>());
