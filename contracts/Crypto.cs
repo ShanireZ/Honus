@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -42,6 +43,50 @@ public static class EventCanonical
 
     public static string HashSelf(string hashPrev, AgentEvent e, long seq)
         => Crypto.Sha256Hex(hashPrev + "\n" + Core(e, seq));
+
+    /// **服务器侧**从落库/收到的**原始 wire 字段**复算 canonicalCore,与 <see cref="Core"/> 产出**逐字节一致**。
+    /// 关键点(保证与 Agent 端 typed 序列化对齐):
+    ///   • payload 用收到的**原始 JSON 文本**(`JsonElement.GetRawText()` / 库内 payload 列)原样拼接(WriteRawValue),
+    ///     不经 Dictionary 往返 —— 杜绝数字格式 / 键序 / 嵌套类型的重序列化漂移。
+    ///   • type 用收到的 snake_case 字符串(它正是枚举 `Json.Wire` 序列化后的值,如 "browser_url")。
+    ///   • evidenceImageId 为 null 时**省略**该键(与 Core 的 WhenWritingNull 一致)。
+    ///   • Utf8JsonWriter 默认用与 JsonSerializer 相同的 `JavaScriptEncoder.Default` 转义 + 相同的 double 最短往返格式。
+    /// 用于哈希链完整性复验(闭合 architecture §10.1「服务器不重算 canonical」)。CanonicalTests 锁定与 Core 的逐字节一致。
+    public static string CoreRaw(
+        string examId, string seatId, string agentId, string machineId,
+        double ts, string typeSnake, string payloadRaw, int risk, string? evidenceImageId, long seq)
+    {
+        var buffer = new ArrayBufferWriter<byte>(256);
+        using (var w = new Utf8JsonWriter(buffer))
+        {
+            w.WriteStartObject();
+            w.WriteString("examId", examId);
+            w.WriteString("seatId", seatId);
+            w.WriteString("agentId", agentId);
+            w.WriteString("machineId", machineId);
+            w.WriteNumber("ts", ts);
+            w.WriteString("type", typeSnake);
+            w.WritePropertyName("payload");
+            w.WriteRawValue(string.IsNullOrEmpty(payloadRaw) ? "{}" : payloadRaw);   // 原样拼接收到的 payload 文本
+            w.WriteNumber("risk", risk);
+            if (evidenceImageId is not null) w.WriteString("evidenceImageId", evidenceImageId);
+            w.WriteNumber("seq", seq);
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// 复算 hashSelf 并与给定值常量时间比较。true = 该 hashSelf 确实承诺(绑定)这组 payload / 字段。
+    /// 注:仅证明「hashSelf ↔ payload/字段」内部自洽;是否链到真正的前驱由**连续性审计**另判(见 IntegrityAudit)。
+    public static bool VerifyHashSelf(
+        string hashPrev, string examId, string seatId, string agentId, string machineId,
+        double ts, string typeSnake, string payloadRaw, int risk, string? evidenceImageId, long seq, string? hashSelf)
+    {
+        if (string.IsNullOrEmpty(hashSelf)) return false;
+        string recomputed = Crypto.Sha256Hex(hashPrev + "\n" +
+            CoreRaw(examId, seatId, agentId, machineId, ts, typeSnake, payloadRaw, risk, evidenceImageId, seq));
+        return Crypto.FixedTimeEquals(recomputed, hashSelf);
+    }
 
     /// 事件签名。**仅依赖 hashSelf 字符串与 seq**,故服务器无需重算 canonical 即可验签(M1)。
     public static string Sig(byte[] psk, string hashSelf, long seq)

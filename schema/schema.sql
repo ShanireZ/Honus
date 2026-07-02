@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS events (
   exam_id           TEXT NOT NULL,
   seat_id           TEXT NOT NULL,
   agent_id          TEXT NOT NULL,
+  machine_id        TEXT,                             -- 机器标识;canonicalCore 含 machineId,须落库以支持 M3 链复验
   seq               INTEGER NOT NULL,                 -- agent 单调序号
   ts                REAL NOT NULL,                    -- agent 本机时钟(Unix 秒)
   recv_ts           REAL NOT NULL,                    -- 服务器接收时钟

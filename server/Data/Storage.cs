@@ -14,6 +14,9 @@ public sealed class Storage
         Directory.CreateDirectory(Path.Combine(_root, "images"));
     }
 
+    /// 数据根(绝对路径)。归档作业据此定位 archive 库文件与冷存目录。
+    public string Root => _root;
+
     /// 相对路径(存 DB)。exam/seat 做路径安全净化,防目录穿越。
     public static string RelPath(string examId, string seatId, string imageId)
         => $"images/{Safe(examId)}/{Safe(seatId)}/{imageId}.webp";

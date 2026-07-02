@@ -51,4 +51,75 @@ public class CanonicalTests
         Assert.Equal(a, b);
         Assert.Matches("^[0-9a-f]{64}$", a);
     }
+
+    // ---- M3 完整性复验:CoreRaw(服务器从原始 wire 字段复算) 必须与 Core(Agent typed 序列化) 逐字节一致 ----
+    // 任何漂移都会让服务器把**合法**事件误判为哈希不符而拒收,故此为硬门禁黄金测试。
+
+    /// 把一个 AgentEvent 的 payload 用 Json.Wire 序列化,取得服务器侧会收到的原始 payload 文本(GetRawText 等价物)。
+    private static string PayloadRaw(AgentEvent e)
+        => System.Text.Json.JsonSerializer.Serialize(e.Payload, Json.Wire);
+
+    private static string TypeSnake(AgentEvent e)
+        => System.Text.Json.JsonSerializer.Serialize(e.Type, Json.Wire).Trim('"');
+
+    [Fact]
+    public void CoreRaw_与Core逐字节一致_含url与嵌套payload()
+    {
+        AgentEvent e = Sample();
+        string raw = EventCanonical.CoreRaw(
+            e.ExamId, e.SeatId, e.AgentId, e.MachineId, e.Ts, TypeSnake(e), PayloadRaw(e), e.Risk, e.EvidenceImageId, e.Seq);
+        Assert.Equal(EventCanonical.Core(e, e.Seq), raw);
+    }
+
+    [Fact]
+    public void CoreRaw_与Core逐字节一致_含evidenceImageId()
+    {
+        AgentEvent e = Sample() with { EvidenceImageId = "img_8f1c2d", Seq = 42 };
+        string raw = EventCanonical.CoreRaw(
+            e.ExamId, e.SeatId, e.AgentId, e.MachineId, e.Ts, TypeSnake(e), PayloadRaw(e), e.Risk, e.EvidenceImageId, e.Seq);
+        Assert.Equal(EventCanonical.Core(e, e.Seq), raw);
+        Assert.Contains("\"evidenceImageId\":\"img_8f1c2d\"", raw);
+    }
+
+    [Theory]
+    [InlineData(SignalType.Heartbeat, 0)]
+    [InlineData(SignalType.ProcessStart, 70)]
+    [InlineData(SignalType.Clipboard, 60)]
+    [InlineData(SignalType.AltTabBurst, 40)]
+    public void CoreRaw_与Core逐字节一致_多类型多payload(SignalType type, int risk)
+    {
+        // 含中文(非 ASCII 转义)、整数、布尔、小数 ts、嵌套对象 —— 覆盖编码器与数字格式的对齐面。
+        var e = new AgentEvent
+        {
+            ExamId = "期末-2026", SeatId = "B12", AgentId = "ag/B12", MachineId = "PC_B12",
+            Ts = 1750000000.0, Type = type,
+            Payload = new()
+            {
+                ["name"] = "向日葵.exe", ["pid"] = 4321, ["whitelisted"] = false,
+                ["nested"] = new Dictionary<string, object?> { ["a"] = 1, ["b"] = "x&y<z>" },
+                ["len"] = 250, ["lines"] = 8,
+            },
+            Risk = risk, Seq = 999,
+        };
+        string raw = EventCanonical.CoreRaw(
+            e.ExamId, e.SeatId, e.AgentId, e.MachineId, e.Ts, TypeSnake(e), PayloadRaw(e), e.Risk, e.EvidenceImageId, e.Seq);
+        Assert.Equal(EventCanonical.Core(e, e.Seq), raw);
+    }
+
+    [Fact]
+    public void VerifyHashSelf_匹配则真_篡改payload则假()
+    {
+        AgentEvent e = Sample();
+        string hashSelf = EventCanonical.HashSelf("GENESIS", e, e.Seq);
+        // 正确 payload → 复验通过
+        Assert.True(EventCanonical.VerifyHashSelf(
+            "GENESIS", e.ExamId, e.SeatId, e.AgentId, e.MachineId, e.Ts, TypeSnake(e), PayloadRaw(e), e.Risk, e.EvidenceImageId, e.Seq, hashSelf));
+        // 篡改 payload(换 url)但仍用旧 hashSelf → 复验失败
+        string tampered = PayloadRaw(e).Replace("chat.openai.com", "judge.exam.cn");
+        Assert.False(EventCanonical.VerifyHashSelf(
+            "GENESIS", e.ExamId, e.SeatId, e.AgentId, e.MachineId, e.Ts, TypeSnake(e), tampered, e.Risk, e.EvidenceImageId, e.Seq, hashSelf));
+        // 篡改 hashPrev → 复验失败(hashSelf 也绑定前驱)
+        Assert.False(EventCanonical.VerifyHashSelf(
+            "OTHER", e.ExamId, e.SeatId, e.AgentId, e.MachineId, e.Ts, TypeSnake(e), PayloadRaw(e), e.Risk, e.EvidenceImageId, e.Seq, hashSelf));
+    }
 }

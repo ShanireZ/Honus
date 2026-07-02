@@ -125,6 +125,20 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
                 log.LogWarning("事件验签失败 agent={Agent} seq={Seq}", agentId, seq);
                 return;
             }
+
+            // 完整性复验(M3·闭合 §10.1「服务器不重算 canonical」):sig 只证明「知道 PSK 且承诺了 hashSelf+seq」,
+            // 本身**不保证 hashSelf 绑定 payload**。此处从**原始 payload 文本 + 落库字段**逐字节复算 canonicalCore、
+            // 复算 hashSelf,要求与自报 hashSelf 一致 —— 使 hashSelf/sig 成为**真正锚定 payload/字段**的取证锚点。
+            // 任何 payload / 字段与 hashSelf 不符(自报错乱或传输中被非 PSK 方篡改) → 拒收,不落库。
+            // 注:持 PSK 学员机仍可自洽地伪造 payload+hashSelf(结构性残留,靠截图/视觉/人工兜底,见 §10.1),
+            //     此步保证的是「锚点确实承诺其 payload」+「链后审计可发现落库后改动/删增」。
+            if (!EventCanonical.VerifyHashSelf(hashPrev ?? "GENESIS", examId, seatId, agentId, machineId,
+                    ts, typeStr, payloadRaw, risk, evidenceImageId, seq, hashSelf))
+            {
+                await link.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "error", code = "bad_hash", seq }), ct);
+                log.LogWarning("事件哈希复验失败(hashSelf 不承诺其 payload) agent={Agent} seq={Seq}", agentId, seq);
+                return;
+            }
         }
 
         double recvTs = Now();
@@ -140,10 +154,10 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, ILogger<E
         long? newId = db.Locked(conn =>
         {
             using SqliteCommand ins = conn.Cmd(
-                @"INSERT INTO events (exam_id,seat_id,agent_id,seq,ts,recv_ts,type,payload,risk,server_risk,evidence_image_id,hash_prev,hash_self,sig)
-                  VALUES (@exam,@seat,@agent,@seq,@ts,@recv,@type,@payload,@risk,@srisk,@ev,@hp,@hs,@sig)
+                @"INSERT INTO events (exam_id,seat_id,agent_id,machine_id,seq,ts,recv_ts,type,payload,risk,server_risk,evidence_image_id,hash_prev,hash_self,sig)
+                  VALUES (@exam,@seat,@agent,@machine,@seq,@ts,@recv,@type,@payload,@risk,@srisk,@ev,@hp,@hs,@sig)
                   ON CONFLICT(agent_id,seq) DO NOTHING",
-                ("@exam", examId), ("@seat", seatId), ("@agent", agentId), ("@seq", seq),
+                ("@exam", examId), ("@seat", seatId), ("@agent", agentId), ("@machine", machineId), ("@seq", seq),
                 ("@ts", ts), ("@recv", recvTs), ("@type", typeStr), ("@payload", payloadRaw),
                 ("@risk", risk), ("@srisk", serverRisk), ("@ev", evidenceImageId), ("@hp", hashPrev), ("@hs", hashSelf), ("@sig", sig));
             int changed = ins.ExecuteNonQuery();

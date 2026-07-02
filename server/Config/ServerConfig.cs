@@ -56,6 +56,18 @@ public sealed record ServerConfig
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。
     public int RiskThreshold { get; init; } = 50;
 
+    // ---- M3 归档 / 清理(architecture §13/§15)----
+    /// 是否启用后台归档作业(默认 true)。:memory: 或无到龄考试时自然 no-op;测试可关闭后台、手动触发 RunOnce。
+    public bool ArchiveEnabled { get; init; } = true;
+    /// 考试**结束**多少天后转 archive 并清理 live。默认 30(§13/§16)。
+    public int RetentionDays { get; init; } = 30;
+    /// 归档"关键数据"判据:事件有效风险 ≥ 此值,或被 suspicious_queue 引用。默认 50(§16)。
+    public int ArchiveCriticalRisk { get; init; } = 50;
+    /// 归档库 SQLite 文件路径(相对 DataDir)。默认 horus-archive.db。
+    public string ArchiveDbPath { get; init; } = "horus-archive.db";
+    /// 后台归档扫描间隔(小时)。默认 6;≤0 = 关闭后台自动扫描(仍可手动 / 测试触发)。
+    public double ArchiveScanIntervalHours { get; init; } = 6;
+
     /// 服务器侧 pHash 近重复判定:同座位相同 phash 视为重复,不另存原图。M1 用精确相等。
     public bool DedupImagesByPhash { get; init; } = true;
 

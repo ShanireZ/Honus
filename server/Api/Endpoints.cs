@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Horus.Contracts;
+using Horus.Server.Analysis;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Ingest;
@@ -192,6 +193,11 @@ public static class Endpoints
                 return Results.Json(list);
             });
         });
+
+        // ---- 哈希链完整性审计(M3):离线复验锚点自洽 + 链连续。只对未归档(live)考试有意义。 ----
+        // 管理鉴权已由全局 /api gate 覆盖。返回 { ok, totalEvents, totalHashOk, totalChainOk, agents:[…] }。
+        app.MapGet("/api/exams/{examId}/integrity", (string examId) =>
+            db.Read(conn => Results.Json(IntegrityAudit.Run(conn, examId))));
 
         // ---- 证据图字节 ----
         app.MapGet("/api/images/{imageId}", async (string imageId, HttpContext ctx) =>

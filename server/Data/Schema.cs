@@ -8,14 +8,17 @@ namespace Horus.Server.Data;
 /// M1 剥离 sqlite-vec 的 vec0 虚表(需 vec0 扩展,属 M3),其余表照建。
 public static class Schema
 {
-    public static string LoadDdl()
+    /// 按资源名后缀读取内嵌 DDL(如 "schema.sql" / "schema-archive.sql")。
+    public static string LoadNamed(string endsWith)
     {
         Assembly asm = typeof(Schema).Assembly;
-        string res = asm.GetManifestResourceNames().First(n => n.EndsWith("schema.sql", StringComparison.OrdinalIgnoreCase));
+        string res = asm.GetManifestResourceNames().First(n => n.EndsWith(endsWith, StringComparison.OrdinalIgnoreCase));
         using Stream s = asm.GetManifestResourceStream(res)!;
         using var r = new StreamReader(s);
         return r.ReadToEnd();
     }
+
+    public static string LoadDdl() => LoadNamed("schema.sql");
 
     public static void Apply(SqliteConnection conn)
     {
@@ -30,11 +33,21 @@ public static class Schema
         Migrate(conn);
     }
 
+    /// 应用归档库 DDL(M3 归档作业首次运行时对 archive 文件调用,idempotent)。
+    public static void ApplyArchive(SqliteConnection conn)
+    {
+        var stmts = SplitStatements(LoadNamed("schema-archive.sql")).ToList();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = string.Join(";\n", stmts) + ";";
+        cmd.ExecuteNonQuery();
+    }
+
     /// 幂等列迁移:CREATE TABLE IF NOT EXISTS 不会给**已存在**的表补列,故对既有 dev DB 显式 ADD COLUMN。
     /// 新建 DB 已含新列(DDL 里有),此处对其为 no-op。
     private static void Migrate(SqliteConnection conn)
     {
         AddColumnIfMissing(conn, "events", "server_risk", "INTEGER");   // M2:服务器侧风险复判
+        AddColumnIfMissing(conn, "events", "machine_id", "TEXT");       // M3:落 machineId 以支持哈希链离线复验
     }
 
     private static void AddColumnIfMissing(SqliteConnection conn, string table, string column, string decl)
