@@ -44,13 +44,11 @@ public sealed record ServerConfig
     public int VisionConfidenceThreshold { get; init; } = 60;
     /// 是否也分析随机基线图(默认 false = 只分析触发型,§5 最小化上传/成本)。
     public bool VisionAnalyzeBaseline { get; init; }
+    /// 补偿重扫间隔(分钟):周期性拾回 uploaded_to_ocr=0 的触发型证据图(被队列丢弃 / 服务器重启丢内存队列的)。默认 5;≤0=关闭。
+    public double VisionBackstopMinutes { get; init; } = 5;
 
-    // ---- §5 隐私收口:送云前对截图的派生处理(归一化坐标 x,y,w,h ∈ [0,1]·分辨率无关)----
-    /// 打码身份矩形(遮住学员姓名/学号),可多个,`;` 分隔,如 "0,0,0.22,0.05;0.8,0,1,0.05"。空=不打码。
-    public string? VisionRedactRects { get; init; }
-    /// 裁剪矩形(只留浏览器/可疑区),单个,如 "0,0.04,1,0.96"(去掉顶栏)。空=不裁剪(整图)。
-    public string? VisionCropRect { get; init; }
-    /// 送云图长边像素上限(降采样·省 token/少送无关像素)。默认 1600;0=不降采样。
+    // ---- §5 送云前的派生处理(owner 决策 2026-07-02:不再打码/裁剪,只降采样;供应商=境内云 MiMo·PIPL 无跨境)----
+    /// 送云图长边像素上限(降采样·省 token/少送无关像素·顺带剥离元数据)。默认 1600;0=不降采样直通。
     public int VisionMaxEdge { get; init; } = 1600;
 
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。

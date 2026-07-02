@@ -1,28 +1,30 @@
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 
 namespace Horus.Server.Data;
 
-/// SQLite 访问层:**单写连接(写锁串行) + 独立只读连接(WAL 并发读)**。
+/// SQLite 访问层:**单写连接(写锁串行) + 只读连接池(WAL 并发读)**。
 ///
 /// 写:所有落库经 <see cref="Write"/> 在写锁内串行(单写者,杜绝 "database is locked" 写-写冲突)。
-/// 读:看板等纯只读查询经 <see cref="Read"/> 走**独立只读连接**——WAL 下读不阻塞写、写不阻塞读,
-///     监考端每 5s 轮询不再与采集写路径抢同一把锁(闭合 architecture §10.2「看板只读查询走独立只读连接」)。
+/// 读:纯只读查询经 <see cref="Read"/> 从**只读连接池**租借一条连接——WAL 下读不阻塞写、写不阻塞读,且
+///     **读与读之间也并发**(池大小内):看板 6 个 GET + 完整性审计(全考试事件 SHA256)+ 归档 copy 读**互不串行**,
+///     避免一个慢只读操作阻塞所有交互看板轮询(闭合 architecture §10.2「看板走独立只读连接」的读-读串行残留)。
 ///
-/// **:memory: 例外**:内存库是每连接独立的(且不支持 WAL),无法开第二条连接看到同一份数据,
-/// 故内存模式下 `_read` 为 null,Read 回退到写连接 + 写锁(语义与旧版单连接完全一致,测试不受影响)。
-/// 图片原图存文件系统,不入 DB(见 Storage)。
+/// **:memory: 例外**:内存库每连接独立(且不支持 WAL),无法开第二条连接看到同一份数据,故内存模式下
+///     无只读池,Read 回退写连接 + 写锁(语义与旧版单连接一致,测试不受影响)。图片原图存文件系统,不入 DB(见 Storage)。
 public sealed class Db : IDisposable
 {
     private readonly SqliteConnection _write;
-    private readonly SqliteConnection? _read;    // 独立只读连接;:memory: 下为 null → 回退写连接
     private readonly object _writeGate = new();
-    private readonly object _readGate = new();   // 单只读连接自身非线程安全:并发读之间仍串行,但**与写不互斥**
+    private readonly SemaphoreSlim? _readSlots;               // 只读并发闸(= 池大小);:memory: 下 null
+    private readonly ConcurrentBag<SqliteConnection>? _readPool;
+    private readonly List<SqliteConnection> _allReads = new();   // 供 Dispose 释放
 
-    public Db(string dataSource)
+    public Db(string dataSource, int readPoolSize = 4)
     {
         bool isMemory = dataSource == ":memory:";
 
-        // Pooling=false:两条连接都是随 Db 生命周期常驻的单例,连接池对单例无益;
+        // Pooling=false:连接随 Db 生命周期常驻的单例/池,连接池对其无益;
         // 且池化会在 Dispose 后仍扣着文件句柄(-wal/-shm 无法释放),妨碍归档 VACUUM / 清理。
         _write = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -35,15 +37,23 @@ public sealed class Db : IDisposable
 
         if (!isMemory)
         {
-            // 只读连接:Mode=ReadOnly 从物理上杜绝经此连接误写;WAL 让它读已提交快照而不阻塞写者。
-            _read = new SqliteConnection(new SqliteConnectionStringBuilder
+            // 只读连接池:Mode=ReadOnly 从物理上杜绝经此误写;WAL 让每条读已提交快照而不阻塞写者。
+            int n = Math.Clamp(readPoolSize, 1, 16);
+            _readSlots = new SemaphoreSlim(n, n);
+            _readPool = new ConcurrentBag<SqliteConnection>();
+            for (int i = 0; i < n; i++)
             {
-                DataSource = dataSource,
-                Mode = SqliteOpenMode.ReadOnly,
-                Pooling = false,
-            }.ToString());
-            _read.Open();
-            Exec(_read, "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+                var rc = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = dataSource,
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
+                }.ToString());
+                rc.Open();
+                Exec(rc, "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+                _readPool.Add(rc);
+                _allReads.Add(rc);
+            }
         }
     }
 
@@ -58,12 +68,23 @@ public sealed class Db : IDisposable
         lock (_writeGate) body(_write);
     }
 
-    /// 纯只读查询:独立只读连接(WAL 并发读,不占写锁)。:memory: 回退写连接 + 写锁。
+    /// 纯只读查询:从只读连接池租借一条(WAL 并发读,不占写锁,读-读并发)。:memory: 回退写连接 + 写锁。
     /// 注意:仅用于**无副作用**的 SELECT;任何写/读改写序列必须走 <see cref="Write"/> 以保原子性。
     public T Read<T>(Func<SqliteConnection, T> body)
     {
-        if (_read is null) { lock (_writeGate) return body(_write); }   // :memory: 回退
-        lock (_readGate) return body(_read);
+        if (_readPool is null) { lock (_writeGate) return body(_write); }   // :memory: 回退
+        _readSlots!.Wait();
+        SqliteConnection? c = null;
+        try
+        {
+            _readPool.TryTake(out c);   // 闸已保证有空闲连接可取
+            return body(c!);
+        }
+        finally
+        {
+            if (c is not null) _readPool.Add(c);
+            _readSlots.Release();
+        }
     }
 
     /// 兼容旧调用点:Locked == Write(既有语义 = 写锁串行)。新代码只读请显式用 Read。
@@ -79,7 +100,8 @@ public sealed class Db : IDisposable
 
     public void Dispose()
     {
-        _read?.Dispose();
+        foreach (SqliteConnection rc in _allReads) rc.Dispose();
+        _readSlots?.Dispose();
         _write.Dispose();
     }
 }

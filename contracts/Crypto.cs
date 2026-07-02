@@ -91,6 +91,11 @@ public static class EventCanonical
     /// 事件签名。**仅依赖 hashSelf 字符串与 seq**,故服务器无需重算 canonical 即可验签(M1)。
     public static string Sig(byte[] psk, string hashSelf, long seq)
         => Crypto.HmacHex(psk, hashSelf + "\n" + seq);
+
+    /// 复验 sig 是否 = HMAC(PSK, hashSelf + "\n" + seq)。用于离线完整性审计:hashSelf 是无密钥 SHA256,
+    /// 非 PSK 方改 payload 后可重算 hashSelf 使其自洽 —— 唯 sig(HMAC-PSK)能识破,故审计须验 sig。
+    public static bool VerifySig(byte[] psk, string? hashSelf, long seq, string? sig)
+        => !string.IsNullOrEmpty(sig) && hashSelf is not null && Crypto.FixedTimeEquals(Sig(psk, hashSelf, seq), sig);
 }
 
 /// 握手与图片通道的鉴权签名。见 api-contract §1.1 / §2.1。

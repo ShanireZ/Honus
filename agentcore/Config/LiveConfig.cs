@@ -17,8 +17,8 @@ public sealed class LiveConfig
 
     public LiveConfig(AgentConfig cfg)
     {
-        _hosts = new(cfg.WhitelistHosts, StringComparer.OrdinalIgnoreCase);
-        _procs = new(cfg.WhitelistProcs.Select(p => p.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
+        _hosts = new(cfg.WhitelistHosts.Select(h => h.Trim()), StringComparer.OrdinalIgnoreCase);
+        _procs = new(cfg.WhitelistProcs.Select(p => p.Trim().ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
         _largePaste = cfg.LargePasteThreshold;
         _targetHeight = cfg.TargetHeight;
         _webpQuality = cfg.WebpQuality;
@@ -72,7 +72,11 @@ public sealed class LiveConfig
         v = new List<string>();
         if (!o.TryGetProperty(key, out JsonElement e) || e.ValueKind != JsonValueKind.Array) return false;
         foreach (JsonElement item in e.EnumerateArray())
-            if (item.ValueKind == JsonValueKind.String) v.Add(item.GetString()!);
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                string s = item.GetString()!.Trim();   // 去尾随空格:防下发端配置不洁致精确匹配失效、判题站误判非白名单
+                if (s.Length > 0) v.Add(s);
+            }
         return true;
     }
 }

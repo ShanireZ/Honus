@@ -210,7 +210,7 @@ public static class Endpoints
                         examId, status = "archived", applicable = false,
                         note = "已归档:关键事件的 hash_self/sig 锚点在 archive 库,整链已因清理而断,不再做 live 连续性审计(见 §13.2)",
                     });
-                return Results.Json(IntegrityAudit.Run(conn, examId));
+                return Results.Json(IntegrityAudit.Run(conn, examId, cfg.Psk));
             }));
 
         // ---- 证据图字节 ----

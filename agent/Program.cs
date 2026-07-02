@@ -110,7 +110,11 @@ internal static class Program
         var rng = new Random();
         while (!ct.IsCancellationRequested)
         {
-            int wait = rng.Next(live.BaselineMinSeconds, live.BaselineMaxSeconds + 1);
+            // min/max 是两个独立 volatile,热更新非原子写有瞬时倒挂窗口(读到新 min 配旧 max)。
+            // 本地读入并钳正 max≥min,杜绝 rng.Next(min>maxExclusive) 抛异常逃出循环、永久停掉基线抓图。
+            int mn = live.BaselineMinSeconds, mx = live.BaselineMaxSeconds;
+            if (mx < mn) mx = mn;
+            int wait = rng.Next(mn, mx + 1);
             try { await Task.Delay(TimeSpan.FromSeconds(wait), ct); }
             catch (TaskCanceledException) { break; }
             try { await cap.CaptureAsync("baseline_random", dedupAgainstLast: false); }

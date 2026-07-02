@@ -20,7 +20,9 @@
     usb:                { label: "USB 设备",     fg: "#ff9a9d", bg: "#3a1315", bd: "#c14045" },
     ide_plugin_suspect: { label: "IDE 插件",     fg: "#a0f0c0", bg: "#123324", bd: "#2f8a5c" },
     browser_unreadable: { label: "浏览器不可读", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" },
-    non_whitelist_web:  { label: "非白名单网站", fg: "#ffb3c1", bg: "#3a1520", bd: "#b0455f" }
+    non_whitelist_web:  { label: "非白名单网站", fg: "#ffb3c1", bg: "#3a1520", bd: "#b0455f" },
+    remote_tool:        { label: "远控工具",     fg: "#ff9a9d", bg: "#3a1315", bd: "#c14045" },
+    suspect:            { label: "可疑",         fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" }
   };
   function kindMeta(kind) {
     return KIND_META[kind] || { label: kind || "未知", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" };
@@ -612,8 +614,7 @@
             '<div class="ref-line"><b>image</b> ' + esc(id) + "</div>" +
             '<div class="evidence" data-img="' + esc(id) + '">' +
             '<img src="' + esc(imageUrl(id)) +
-            '" alt="证据图 ' + esc(id) + '" loading="lazy" ' +
-            'onerror="this.parentNode.innerHTML=\'<div class=&quot;loading&quot;>图片加载失败</div>\'"/>' +
+            '" alt="证据图 ' + esc(id) + '" loading="lazy" />' +
             "</div>";
         } else if (kind === "event") {
           // 直接展示 ref 文本；若已加载对应事件则附摘要（按契约无需单独请求）
@@ -661,10 +662,14 @@
         "</div>" +
       "</div>";
 
-    // 证据图点击放大
+    // 证据图点击放大 + 加载失败占位(用 addEventListener 而非内联 onerror:CSP script-src 'self' 会屏蔽内联处理器)
     body.querySelectorAll(".evidence").forEach(function (ev) {
       ev.addEventListener("click", function () {
         openLightbox(imageUrl(ev.getAttribute("data-img")));
+      });
+      var img = ev.querySelector("img");
+      if (img) img.addEventListener("error", function () {
+        ev.innerHTML = '<div class="loading">图片加载失败</div>';
       });
     });
 
@@ -814,8 +819,7 @@
       if (ev.evidenceImageId) {
         thumb =
           '<img class="thumb" src="' + esc(imageUrl(ev.evidenceImageId)) +
-          '" alt="证据缩略图" loading="lazy" data-img="' + esc(ev.evidenceImageId) + '" ' +
-          'onerror="this.style.display=\'none\'"/>';
+          '" alt="证据缩略图" loading="lazy" data-img="' + esc(ev.evidenceImageId) + '" />';
       }
 
       // 有效风险 = max(Agent 自报, 服务器复判);着色用有效风险,避免"谎报 risk=0"在明细里显示成低危。
@@ -841,6 +845,8 @@
         thumbEl.addEventListener("click", function () {
           openLightbox(imageUrl(thumbEl.getAttribute("data-img")));
         });
+        // 加载失败隐藏(addEventListener 而非内联 onerror:CSP 会屏蔽内联处理器)
+        thumbEl.addEventListener("error", function () { thumbEl.style.display = "none"; });
       }
       tl.appendChild(item);
     });

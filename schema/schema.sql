@@ -131,6 +131,14 @@ CREATE TABLE IF NOT EXISTS suspicious_queue (
 );
 CREATE INDEX IF NOT EXISTS ix_susp_status ON suspicious_queue(exam_id, status, score);
 
+-- 每考试已下发配置(白名单/阈值/截图参数)持久化 -------------
+-- 服务器重启后回填内存缓存,使 server_risk 白名单复判不退化、Agent 重连 hello 时能补推(见 architecture §10.2)。
+CREATE TABLE IF NOT EXISTS exam_config (
+  exam_id    TEXT PRIMARY KEY,
+  config     TEXT NOT NULL,                          -- 下发的 camelCase 配置 JSON 原文
+  updated_at REAL NOT NULL
+);
+
 -- Agent 心跳 / 在线状态 --------------------------------------
 CREATE TABLE IF NOT EXISTS agent_heartbeats (
   agent_id   TEXT NOT NULL,

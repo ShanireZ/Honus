@@ -91,8 +91,8 @@ public static class RiskModel
         foreach (JsonElement it in e.EnumerateArray())
             if (it.ValueKind == JsonValueKind.String)
             {
-                string? s = it.GetString();
-                if (!string.IsNullOrEmpty(s)) set.Add(lower ? s!.ToLowerInvariant() : s!);
+                string s = (it.GetString() ?? "").Trim();   // 去尾随空格:与 Agent LiveConfig 一致,防精确匹配因空白失配
+                if (s.Length > 0) set.Add(lower ? s.ToLowerInvariant() : s);
             }
         return set;
     }

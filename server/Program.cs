@@ -1,6 +1,7 @@
 using Horus.Contracts;
 using Horus.Server.Analysis.Vision;
 using Horus.Server.Api;
+using Microsoft.Extensions.Logging;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Ingest;
@@ -64,6 +65,13 @@ string dataSource = cfg.DbPath == ":memory:"
     ? ":memory:"
     : Path.IsPathRooted(cfg.DbPath) ? cfg.DbPath : Path.Combine(dataDir, cfg.DbPath);
 
+// 启动期校验密钥 base64 合法(否则运行期每请求访问 Psk/Ksk 会抛 FormatException → 500,难排查):此处 fail-fast 给清晰错误。
+try { _ = cfg.Psk; _ = cfg.Ksk; }
+catch (FormatException)
+{
+    throw new InvalidOperationException("pskBase64 / keystrokeSecretBase64 不是合法 base64(长度须 4 的倍数、仅 A-Za-z0-9+/= )。请检查配置。");
+}
+
 // Fail-closed:非 loopback 绑定却缺 PSK / 管理令牌 = 采集或管理面裸奔,拒绝启动(allowInsecure 仅联调可绕)。
 string[] urls = cfg.Urls.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 bool lanExposed = urls.Any(u =>
@@ -90,14 +98,17 @@ builder.Services.AddSingleton<KeystrokeIngest>();
 // ---- 视觉分析(L2:视觉 LLM 取代 OCR + L3 Logo)。provider-agnostic:mock / OpenAI 兼容(DeepSeek/MiMo/Qwen/GLM) ----
 if (cfg.VisionEnabled)
 {
-    IVisionAnalyzer analyzer = string.Equals(cfg.VisionProvider, "openai", StringComparison.OrdinalIgnoreCase)
-        ? new OpenAiCompatibleVisionAnalyzer(
-            new HttpClient { Timeout = TimeSpan.FromSeconds(60) },
-            cfg.VisionBaseUrl ?? throw new InvalidOperationException("visionProvider=openai 需配 visionBaseUrl"),
-            cfg.VisionModel ?? throw new InvalidOperationException("visionProvider=openai 需配 visionModel"),
-            SecretProtect.Resolve(cfg))   // env 明文 > visionApiKeyEnc(DPAPI 解密) > visionApiKey 明文
-        : new MockVisionAnalyzer();
-    builder.Services.AddSingleton(analyzer);
+    if (string.Equals(cfg.VisionProvider, "openai", StringComparison.OrdinalIgnoreCase))
+    {
+        string vBaseUrl = cfg.VisionBaseUrl ?? throw new InvalidOperationException("visionProvider=openai 需配 visionBaseUrl");
+        string vModel = cfg.VisionModel ?? throw new InvalidOperationException("visionProvider=openai 需配 visionModel");
+        string vKey = SecretProtect.Resolve(cfg);   // env 明文 > visionApiKeyEnc(DPAPI 解密) > visionApiKey 明文
+        builder.Services.AddSingleton<IVisionAnalyzer>(sp => new OpenAiCompatibleVisionAnalyzer(
+            new HttpClient { Timeout = TimeSpan.FromSeconds(60) }, vBaseUrl, vModel, vKey,
+            sp.GetRequiredService<ILogger<OpenAiCompatibleVisionAnalyzer>>()));   // 注入 logger:端点异常可见
+    }
+    else
+        builder.Services.AddSingleton<IVisionAnalyzer>(new MockVisionAnalyzer());
 }
 builder.Services.AddSingleton<VisionAnalysisService>();               // 未注册 IVisionAnalyzer 时内部 no-op
 builder.Services.AddHostedService(sp => sp.GetRequiredService<VisionAnalysisService>());
