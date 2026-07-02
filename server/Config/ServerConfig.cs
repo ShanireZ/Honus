@@ -45,6 +45,14 @@ public sealed record ServerConfig
     /// 是否也分析随机基线图(默认 false = 只分析触发型,§5 最小化上传/成本)。
     public bool VisionAnalyzeBaseline { get; init; }
 
+    // ---- §5 隐私收口:送云前对截图的派生处理(归一化坐标 x,y,w,h ∈ [0,1]·分辨率无关)----
+    /// 打码身份矩形(遮住学员姓名/学号),可多个,`;` 分隔,如 "0,0,0.22,0.05;0.8,0,1,0.05"。空=不打码。
+    public string? VisionRedactRects { get; init; }
+    /// 裁剪矩形(只留浏览器/可疑区),单个,如 "0,0.04,1,0.96"(去掉顶栏)。空=不裁剪(整图)。
+    public string? VisionCropRect { get; init; }
+    /// 送云图长边像素上限(降采样·省 token/少送无关像素)。默认 1600;0=不降采样。
+    public int VisionMaxEdge { get; init; } = 1600;
+
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。
     public int RiskThreshold { get; init; } = 50;
 

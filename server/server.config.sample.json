@@ -1,43 +1,45 @@
 {
-  // 监考服务器配置样例。复制为 server.config.json 后按现场调整。
+  // 监考服务器配置**样例(模板·已提交进 git 公开仓库)**。复制为 server.config.json(已 gitignore)后按现场填真值。
+  // ⚠️ 切勿把真实密钥 / API key 填进本 sample 文件 —— 会随提交泄漏到公开仓库。真值只放 server.config.json。
   "urls": "http://0.0.0.0:5199",
   "dataDir": "./data",
   "dbPath": "horus.db",
-
   // 预共享 HMAC 密钥(base64),必须与各 Agent 的 psk 一致。
   // 留空 = 关闭验签(仅本机联调用;生产务必配置)。
   // 生成示例(PowerShell): [Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))
   "pskBase64": "",
-
   // 击键旁路密钥(base64):判题后端持它对 /ingest/keystroke 提交体签名(X-Horus-KSig)。
   // 留空 = 关闭击键鉴权(仅联调)。生产接了判题埋点应配置,否则同网学员机可伪造/栽赃他人击键样本。与 psk 相互独立。
   "keystrokeSecretBase64": "",
-
   // 管理/看板令牌:所有 /api/*(除 /api/login、/api/logout)需带凭证。
   //   浏览器:POST /api/login {token} 校验后种 HttpOnly cookie(JS 读不到、不进 URL)——首选;
   //   脚本客户端:X-Horus-Admin 头;图片字节端点兼容 ?t= 查询。
   // 留空 = 关闭管理鉴权(仅联调)。生产务必配置,否则同网学员机可下发配置关掉全场检测/拉证据图/抹裁决。
   "adminToken": "",
-
   // 非 loopback 绑定时,缺 PSK 或 adminToken 会拒绝启动(fail-closed)。仅本机联调可设 true 放行。
   "allowInsecure": false,
-
   "riskThreshold": 50,
   "dedupImagesByPhash": true,
   "onlineWindowSeconds": 90,
   "recentRiskWindowSeconds": 300,
-
   // 视觉分析(L2:视觉 LLM 取代 OCR + L3 Logo,合并单一视觉级)。一次调用做文字提取+界面/图标识别+分类。
   // visionProvider: 留空/off=关(默认) | mock(确定性·联调) | openai(OpenAI 兼容端点)。
   //   openai 通吃小米 MiMo-V2.5 / DeepSeek-V4 / Qwen-VL / GLM-4V —— 换供应商=换 baseUrl+model+key。
   //   ★ owner 选定 = 小米 MiMo-V2.5 托管 API(境内云,OpenAI 兼容):
   "visionProvider": "openai",
   "visionBaseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
-  "visionModel": "MiMo-V2.5",
-  // ★ API key:**直接把明文填到 visionApiKey**,服务器启动会**自动加密**为下面的 visionApiKeyEnc 并**清空本字段**(密文回写文件·明文不再存在)。
+  "visionModel": "mimo-v2.5",
+  // ★ API key:在 **server.config.json**(非本 sample)里把明文填到 visionApiKey,服务器启动会**自动加密**为下面的 visionApiKeyEnc 并**清空本字段**。
   "visionApiKey": "",
   // 自动生成的 DPAPI 密文(机器绑定·勿手改)。也可用 `Horus.Server protect-secret <key>` 预生成后直接填这里、visionApiKey 留空。
   "visionApiKeyEnc": "",
   "visionConfidenceThreshold": 60,
-  "visionAnalyzeBaseline": false
+  "visionAnalyzeBaseline": false,
+  // §5 隐私收口(送云前对截图派生处理·归一化坐标 x,y,w,h ∈ [0,1]·分辨率无关):
+  //   visionRedactRects: 打码身份矩形(遮学员姓名/学号),可多个用 ; 分隔。按你考场 UI 布局填,如顶栏姓名 "0,0,0.22,0.05"。留空=不打码。
+  //   visionCropRect:    裁剪矩形(只留浏览器/答题区),如去掉底部任务栏 "0,0,1,0.96"。留空=整图。
+  //   visionMaxEdge:     送云图长边像素上限(降采样省 token)。默认 1600;0=不降采样。**原图永不出网,只送派生图。**
+  "visionRedactRects": "",
+  "visionCropRect": "",
+  "visionMaxEdge": 1600
 }

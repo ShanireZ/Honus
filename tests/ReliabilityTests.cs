@@ -5,6 +5,8 @@ using Horus.Agent.Buffer;
 using Horus.Agent.Config;
 using Horus.Agent.Transport;
 using Horus.Contracts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace Horus.Server.Tests;
@@ -669,6 +671,53 @@ public class SecretProtectTests
             Assert.Equal("sk-mimo-plain-999", Horus.Server.Config.SecretProtect.Unprotect(enc!));
         }
         finally { Directory.Delete(dir, true); }
+    }
+}
+
+/// §5 隐私收口:打码身份 + 降采样 + 直通/宁跳过不泄漏。用真 WebP(ImageSharp 现造)验证。
+public class VisionImagePrepTests
+{
+    [Fact]
+    public void 打码矩形变暗_降采样_输出有效webp()
+    {
+        // 400x200 全白 → WebP
+        using var src = new Image<Rgba32>(400, 200, Color.White);
+        using var ms0 = new MemoryStream();
+        src.SaveAsWebp(ms0);
+        byte[] webp = ms0.ToArray();
+
+        var cfg = new Horus.Server.Config.ServerConfig
+        {
+            VisionRedactRects = "0,0,0.25,0.5",   // 左上 100x100 打码
+            VisionMaxEdge = 200,                   // 400x200 → 长边降到 200 → 200x100
+        };
+        byte[]? outb = Horus.Server.Analysis.Vision.VisionImagePrep.Prepare(webp, cfg);
+        Assert.NotNull(outb);
+
+        using var img = Image.Load<Rgba32>(outb!);
+        Assert.True(Math.Max(img.Width, img.Height) <= 200);           // 已降采样
+        Rgba32 dark = img[2, 2];                                        // 打码区(缩放后仍在左上)
+        Assert.True(dark.R < 40 && dark.G < 40 && dark.B < 40, $"打码区应为暗色, got {dark}");
+        Rgba32 white = img[img.Width - 2, img.Height - 2];             // 未打码区
+        Assert.True(white.R > 200 && white.G > 200 && white.B > 200, $"未打码区应为白, got {white}");
+    }
+
+    [Fact]
+    public void 无收口配置_直通原字节不解码()
+    {
+        byte[] fake = System.Text.Encoding.ASCII.GetBytes("not-an-image-AICHAT-marker");
+        byte[]? outb = Horus.Server.Analysis.Vision.VisionImagePrep.Prepare(
+            fake, new Horus.Server.Config.ServerConfig { VisionMaxEdge = 0 });
+        Assert.Same(fake, outb);   // 直通(未解码,mock 标记保留)
+    }
+
+    [Fact]
+    public void 要打码却非图_返回null不泄漏身份()
+    {
+        byte[] fake = System.Text.Encoding.ASCII.GetBytes("not-an-image");
+        byte[]? outb = Horus.Server.Analysis.Vision.VisionImagePrep.Prepare(
+            fake, new Horus.Server.Config.ServerConfig { VisionRedactRects = "0,0,0.2,0.05" });
+        Assert.Null(outb);   // 解码失败 + 要打码 → null(宁跳过分析也不送未打码图)
     }
 }
 

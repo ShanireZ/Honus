@@ -69,11 +69,24 @@ public sealed class VisionAnalysisService : BackgroundService
 
         string? full = _storage.Resolve(meta.File);
         if (full is null || !File.Exists(full)) return;
-        byte[] bytes = await File.ReadAllBytesAsync(full, ct);
+        byte[] original = await File.ReadAllBytesAsync(full, ct);
 
-        // §5 收口:只送派生字节。**真裁剪浏览器区 / 打码身份留待接真端点时补**(见 architecture §5)—— 现为直传 stub。
+        // §5 收口:打码身份 + 裁剪可疑区 + 降采样后,**只送派生字节**(原图字节只读、永不出网)。
+        // 派生为 null = 要打码却解不开图 → 跳过分析(宁跳过也不泄漏身份),但标记已处理以免重试。
+        byte[]? derived = VisionImagePrep.Prepare(original, _cfg);
+        if (derived is null)
+        {
+            _db.Write(conn =>
+            {
+                using SqliteCommand mk = conn.Cmd("UPDATE images SET uploaded_to_ocr=1 WHERE image_id=@id", ("@id", imageId));
+                mk.ExecuteNonQuery();
+            });
+            _log.LogWarning("视觉收口失败(要打码却解码失败),跳过分析 image={Image}", imageId);
+            return;
+        }
+
         VisionVerdict? v = await _analyzer!.AnalyzeAsync(
-            bytes, new VisionContext(meta.Exam, meta.Seat, imageId, meta.Trigger), ct);
+            derived, new VisionContext(meta.Exam, meta.Seat, imageId, meta.Trigger), ct);
 
         double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
         _db.Write(conn =>

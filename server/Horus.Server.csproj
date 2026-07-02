@@ -15,6 +15,8 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.28" />
     <!-- DPAPI:视觉端点 API key 加密存储配置文件(不存明文),读取时机器绑定解密。仅 Windows 运行时。 -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- §5 收口:送云视觉 LLM 前对截图 decode/裁剪/打码身份/降采样再 re-encode(与 Agent 同版,WebP 互通)。 -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 
   <ItemGroup>

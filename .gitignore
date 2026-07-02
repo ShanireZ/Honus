@@ -14,9 +14,11 @@
 *.swp
 
 # === Horus 运行时 / 机密(切勿提交) ===
-# 真实 Agent 配置含 PSK 预共享密钥 —— 只提交 *.sample.json
+# 真实配置含 PSK / 管理令牌 / 视觉 API key —— 只提交 *.sample.json,真值放 *.config.json
 agent.config.json
 **/agent.config.json
+server.config.json
+**/server.config.json
 # Agent 断网缓冲
 **/buffer/
 # 服务器运行时:SQLite 库与证据截图
