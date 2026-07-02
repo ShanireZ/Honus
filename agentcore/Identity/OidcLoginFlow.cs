@@ -49,7 +49,9 @@ public static class OidcLoginFlow
             $"&scope={Uri.EscapeDataString(cfg.OidcScope)}" +
             $"&code_challenge={codeChallenge}&code_challenge_method=S256" +
             $"&state={Uri.EscapeDataString(state)}&nonce={Uri.EscapeDataString(nonce)}";
-        (openBrowser ?? OpenBrowser)(authorizeUrl);
+        Console.WriteLine("[horus-agent] OIDC 授权地址(如浏览器未自动打开请手动访问):\n" + authorizeUrl);
+        if (Environment.GetEnvironmentVariable("HORUS_OIDC_NO_BROWSER") != "1")
+            (openBrowser ?? OpenBrowser)(authorizeUrl);
 
         // 4) 等回调,取 code(校验 state)
         string code = await AwaitCodeAsync(listener, state, ct);
