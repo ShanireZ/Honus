@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS archive_events (
   exam_id           TEXT NOT NULL,
   seat_id           TEXT NOT NULL,
   agent_id          TEXT,
+  machine_id        TEXT,                             -- canonicalCore 含 machineId:随档留存才能日后独立逐字节复算 hash_self
   seq               INTEGER,
   ts                REAL NOT NULL,
   type              TEXT NOT NULL,

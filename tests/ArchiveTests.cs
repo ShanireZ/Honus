@@ -339,4 +339,109 @@ public class FileDbArchiveTests
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }
+
+    private const string ImgId = "img_ev010000";
+    private const string PayloadText = "{\"note\":\"x\"}";
+
+    /// 播种一条**合法签名**的关键事件(risk80·引用证据图)+ 其证据图(is_evidence=1),event.id 显式=1(便于模拟崩溃续跑)。
+    /// 返回该事件 hash_self(供独立复验)。status/是否写 live 图文件可配。
+    private static string SeedSignedEvidence(Db db, Storage storage, string status, double t, bool writeImgFile)
+    {
+        var core = new AgentEvent
+        {
+            ExamId = "E1", SeatId = "A01", AgentId = "ag", MachineId = "PC",
+            Ts = t, Type = SignalType.BrowserUrl, Payload = new() { ["note"] = "x" },
+            Risk = 80, EvidenceImageId = ImgId, Seq = 1,
+        };
+        string hs = EventCanonical.HashSelf("GENESIS", core, 1);
+        string sig = EventCanonical.Sig(TestApp.Psk, hs, 1);
+        if (writeImgFile)
+            storage.SaveWebpAsync("E1", "A01", ImgId, Encoding.ASCII.GetBytes("webp-" + ImgId)).GetAwaiter().GetResult();
+        db.Write(conn =>
+        {
+            using (SqliteCommand c = conn.Cmd(
+                @"INSERT INTO exams (exam_id,name,status,started_at,ended_at,created_at) VALUES ('E1','x',@st,@t,@t,@t)
+                  ON CONFLICT(exam_id) DO UPDATE SET status=@st, ended_at=@t",   // 用 UPDATE 而非 REPLACE:避免隐式 DELETE 触发 seats FK
+                ("@st", status), ("@t", t))) c.ExecuteNonQuery();
+            using (SqliteCommand c = conn.Cmd("INSERT OR IGNORE INTO seats (exam_id,seat_id,agent_id) VALUES ('E1','A01','ag')")) c.ExecuteNonQuery();
+            using (SqliteCommand c = conn.Cmd(
+                @"INSERT INTO events (id,exam_id,seat_id,agent_id,machine_id,seq,ts,recv_ts,type,payload,risk,evidence_image_id,hash_prev,hash_self,sig)
+                  VALUES (1,'E1','A01','ag','PC',1,@t,@t,'browser_url',@p,80,@img,'GENESIS',@hs,@sig)",
+                ("@t", t), ("@p", PayloadText), ("@img", ImgId), ("@hs", hs), ("@sig", sig))) c.ExecuteNonQuery();
+            using (SqliteCommand c = conn.Cmd(
+                @"INSERT INTO images (image_id,exam_id,seat_id,agent_id,ts,recv_ts,trigger,phash,file_path,format,is_evidence)
+                  VALUES (@img,'E1','A01','ag',@t,@t,'event:browser','0000000000000000',@fp,'webp',1)",
+                ("@img", ImgId), ("@t", t), ("@fp", Storage.RelPath("E1", "A01", ImgId)))) c.ExecuteNonQuery();
+        });
+        return hs;
+    }
+
+    [Fact]
+    public void 归档事件保留machineId与原始risk_锚点可独立逐字节复验()
+    {
+        // #item3:archive_events 补 machine_id + 存原始 agent risk → 归档后凭落档字段独立复算 hash_self 应一致。
+        string dir = TempDir();
+        try
+        {
+            using var db = new Db(Path.Combine(dir, "live.db"));
+            var storage = new Storage(dir);
+            string hs = SeedSignedEvidence(db, storage, "ended", 1000.0, writeImgFile: true);
+
+            var svc = new ArchiveService(db, storage, Cfg(), NullLogger<ArchiveService>.Instance);
+            Assert.Equal(1, svc.RunOnce(1000.0 + 40 * Day).Archived);
+
+            // 从 archive 库读回落档字段,独立复算 hash_self
+            using var arc = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(dir, "arch.db"), Pooling = false }.ToString());
+            arc.Open();
+            using SqliteCommand c = arc.CreateCommand();
+            c.CommandText = "SELECT machine_id,risk,payload,hash_self FROM archive_events WHERE id=1";
+            using SqliteDataReader r = c.ExecuteReader();
+            Assert.True(r.Read());
+            string machineId = r.GetString(0);
+            int risk = r.GetInt32(1);
+            string payload = r.GetString(2);
+            string hashSelf = r.GetString(3);
+            Assert.Equal("PC", machineId);
+            Assert.Equal(80, risk);                 // 原始 agent risk(非 max)
+            Assert.Equal(hs, hashSelf);
+            bool ok = EventCanonical.VerifyHashSelf(
+                "GENESIS", "E1", "A01", "ag", machineId, 1000.0, "browser_url", payload, risk, ImgId, 1, hashSelf);
+            Assert.True(ok, "归档锚点应可凭落档字段独立复算 hash_self");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
+    public void copy后delete前崩溃_重跑不重复归档且live清空()
+    {
+        // #item4:模拟"copy 已完成(archive 有数据 + 证据图已移冷存)、delete 未执行(live 数据还在·status='archiving')"崩溃态。
+        // 真实崩溃下 live 事件 id 不变,故用显式 id=1 复播,重跑应凭 ON CONFLICT(id)/MoveToArchive 容忍已迁而收敛、不产生重复。
+        string dir = TempDir();
+        try
+        {
+            using var db = new Db(Path.Combine(dir, "live.db"));
+            var storage = new Storage(dir);
+            string ap = Path.Combine(dir, "arch.db");
+
+            // 第一次:完整归档(copy+文件移冷存+delete+archived)
+            SeedSignedEvidence(db, storage, "ended", 1000.0, writeImgFile: true);
+            var svc = new ArchiveService(db, storage, Cfg(), NullLogger<ArchiveService>.Instance);
+            Assert.Equal(1, svc.RunOnce(1000.0 + 40 * Day).Archived);
+            Assert.Equal(1, OpenArchiveScalar(ap, "SELECT COUNT(*) FROM archive_events"));
+            Assert.Equal(1, OpenArchiveScalar(ap, "SELECT COUNT(*) FROM archive_images"));
+
+            // 模拟崩溃残留:同 id 复播 live 行 + 置 archiving(证据图此刻已在冷存,不重写 live 文件)
+            SeedSignedEvidence(db, storage, "archiving", 1000.0, writeImgFile: false);
+
+            // 重跑 → 收敛:INSERT OR IGNORE 不重复、MoveToArchive 容忍源已迁、删 live、置 archived
+            Assert.Equal(1, svc.RunOnce(1000.0 + 40 * Day).Archived);
+            Assert.Equal(1, OpenArchiveScalar(ap, "SELECT COUNT(*) FROM archive_events"));   // **无重复**
+            Assert.Equal(1, OpenArchiveScalar(ap, "SELECT COUNT(*) FROM archive_images"));   // **无重复**
+            long liveEv = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT COUNT(*) FROM events WHERE exam_id='E1'"); return Convert.ToInt64(c.ExecuteScalar()); });
+            Assert.Equal(0, liveEv);   // live 清空
+            string status = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT status FROM exams WHERE exam_id='E1'"); return (string)c.ExecuteScalar()!; });
+            Assert.Equal("archived", status);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
 }

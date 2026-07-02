@@ -165,7 +165,7 @@ public sealed class ArchiveService : BackgroundService
 
     // ================= 读取快照 =================
 
-    private sealed record EventRow(long Id, string SeatId, string? AgentId, long Seq, double Ts, string Type,
+    private sealed record EventRow(long Id, string SeatId, string? AgentId, string? MachineId, long Seq, double Ts, string Type,
         string Payload, int Risk, int ServerRisk, string? EvidenceImageId, string? HashPrev, string? HashSelf, string? Sig);
     private sealed record ImageRow(string ImageId, string SeatId, double Ts, string? Trigger, string? Phash,
         string FilePath, int? Width, int? Height, string? Format, long? Bytes);
@@ -217,16 +217,17 @@ public sealed class ArchiveService : BackgroundService
         var criticalEvents = new List<EventRow>();
         var criticalEvidenceImgIds = new HashSet<string>();
         using (SqliteCommand c = conn.Cmd(
-            @"SELECT id,seat_id,agent_id,seq,ts,type,payload,risk,COALESCE(server_risk,0),evidence_image_id,hash_prev,hash_self,sig
+            @"SELECT id,seat_id,agent_id,machine_id,seq,ts,type,payload,risk,COALESCE(server_risk,0),evidence_image_id,hash_prev,hash_self,sig
               FROM events WHERE exam_id=@e", ("@e", examId)))
         using (SqliteDataReader r = c.ExecuteReader())
             while (r.Read())
             {
                 var ev = new EventRow(
-                    r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetInt64(3), r.GetDouble(4),
-                    r.GetString(5), r.IsDBNull(6) ? "{}" : r.GetString(6), r.GetInt32(7), r.GetInt32(8),
-                    r.IsDBNull(9) ? null : r.GetString(9), r.IsDBNull(10) ? null : r.GetString(10),
-                    r.IsDBNull(11) ? null : r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12));
+                    r.GetInt64(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2),
+                    r.IsDBNull(3) ? null : r.GetString(3), r.GetInt64(4), r.GetDouble(5),
+                    r.GetString(6), r.IsDBNull(7) ? "{}" : r.GetString(7), r.GetInt32(8), r.GetInt32(9),
+                    r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetString(11),
+                    r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13));
                 bool critical = Math.Max(ev.Risk, ev.ServerRisk) >= _cfg.ArchiveCriticalRisk || refEventIds.Contains(ev.Id);
                 if (critical)
                 {
@@ -302,11 +303,13 @@ public sealed class ArchiveService : BackgroundService
         // 关键事件(保留 hash_self/sig 锚点)
         foreach (EventRow ev in s.CriticalEvents)
             Exec(arc, tx,
-                @"INSERT INTO archive_events (id,exam_id,seat_id,agent_id,seq,ts,type,payload,risk,evidence_image_id,hash_prev,hash_self,sig)
-                  VALUES (@id,@e,@seat,@agent,@seq,@ts,@type,@payload,@risk,@ev,@hp,@hs,@sig)
+                @"INSERT INTO archive_events (id,exam_id,seat_id,agent_id,machine_id,seq,ts,type,payload,risk,evidence_image_id,hash_prev,hash_self,sig)
+                  VALUES (@id,@e,@seat,@agent,@machine,@seq,@ts,@type,@payload,@risk,@ev,@hp,@hs,@sig)
                   ON CONFLICT(id) DO NOTHING",
-                ("@id", ev.Id), ("@e", examId), ("@seat", ev.SeatId), ("@agent", ev.AgentId), ("@seq", ev.Seq),
-                ("@ts", ev.Ts), ("@type", ev.Type), ("@payload", ev.Payload), ("@risk", Math.Max(ev.Risk, ev.ServerRisk)),
+                // risk 存**原始 agent 自报值**(canonicalCore 签的正是它)——归档后凭 machine_id + 原始 risk + payload 可独立逐字节复算 hash_self。
+                // 有效风险 max(risk,server_risk) 只用于 LoadSnapshot 的关键性判定,不入锚点(否则 server_risk>risk 时锚点不可复验)。
+                ("@id", ev.Id), ("@e", examId), ("@seat", ev.SeatId), ("@agent", ev.AgentId), ("@machine", ev.MachineId), ("@seq", ev.Seq),
+                ("@ts", ev.Ts), ("@type", ev.Type), ("@payload", ev.Payload), ("@risk", ev.Risk),
                 ("@ev", ev.EvidenceImageId), ("@hp", ev.HashPrev), ("@hs", ev.HashSelf), ("@sig", ev.Sig));
 
         // 关键图片:移入冷存(改写 file_path)+ 其 OCR/Logo

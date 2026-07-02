@@ -318,9 +318,11 @@ public static class Endpoints
         });
 
         // 归档作业手动触发(运维):立即扫描到龄考试并归档 + 清理。后台每 6h 也自动跑。返回本次报告。
-        app.MapPost("/api/archive/run", (HttpContext ctx) =>
+        // ct 用 **ApplicationStopping** 而非 ctx.RequestAborted:归档一旦启动就跑完一批(客户端断开/超时不半途中断),
+        // 仅服务器关停才在考试之间停(每场原子安全)。
+        app.MapPost("/api/archive/run", () =>
         {
-            ArchiveService.Report report = archive.RunOnce(Now(), ctx.RequestAborted);
+            ArchiveService.Report report = archive.RunOnce(Now(), app.Lifetime.ApplicationStopping);
             return Results.Json(report);
         });
 

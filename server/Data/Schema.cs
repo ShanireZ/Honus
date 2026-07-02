@@ -37,9 +37,13 @@ public static class Schema
     public static void ApplyArchive(SqliteConnection conn)
     {
         var stmts = SplitStatements(LoadNamed("schema-archive.sql")).ToList();
-        using SqliteCommand cmd = conn.CreateCommand();
-        cmd.CommandText = string.Join(";\n", stmts) + ";";
-        cmd.ExecuteNonQuery();
+        using (SqliteCommand cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = string.Join(";\n", stmts) + ";";
+            cmd.ExecuteNonQuery();
+        }
+        // 既有 archive 库(CREATE IF NOT EXISTS 不补列)补 machine_id:归档事件锚点日后独立复算 hash_self 需 machineId。
+        AddColumnIfMissing(conn, "archive_events", "machine_id", "TEXT");
     }
 
     /// 幂等列迁移:CREATE TABLE IF NOT EXISTS 不会给**已存在**的表补列,故对既有 dev DB 显式 ADD COLUMN。
