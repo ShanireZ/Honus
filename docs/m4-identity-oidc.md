@@ -113,8 +113,12 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
 > 若日后改走**拓扑 B（Agent public client）**才需额外放开 `token_endpoint_auth_method=none`（改 `provider.js` 硬逻辑）——**拓扑 A 不需要**。
 > **部署**：cpplearn 侧填 `OAUTH_HORUS_*` env + 重启即启用 horus client;`OAUTH_HORUS_REDIRECT_URIS` 默认 `http://127.0.0.1/cb`。
 
-**✅ 验证**：cpplearn 全量 `test:server` 全绿（**75 unit + 65 integration = 585 测试**，含新增 OIDC 用例）；改动模块冒烟加载无循环依赖。
-**⚠️ 上线前 live smoke（建议）**：cpplearn 集成测试走 `providerShim`（测试替身），**未**用真 oidc-provider 跑「horus native client 授权码 → token → 解 id_token 验富 claim」的完整链。上线前应用**真 RSA 密钥 + 真 provider**做一次 live smoke，确认 `conformIdTokenClaims:false` 下 `horus_profile` claims 确实落入 id_token、且 native loopback 动态端口回调放行。
+**✅ 单测**：cpplearn 全量 `test:server` 全绿（**75 unit + 65 integration = 585 测试**）+ Horus **142 测试**（含 A1/A2 端到端闭合）。
+**✅ 本地 live smoke 已通过（2026-07-02·真组件端到端）**：本地起真 cpplearn（`OAUTH_ISSUER=http://127.0.0.1:3939` 全 HTTP 免证书·加载 C1–C5）+ 真 Horus Server（authMode=oidc·启动即从 cpplearn 拉 JWKS）+ **真 Horus.Agent.exe**。实测链路全绿：
+> - cpplearn 真 oidc-provider 签发的 **id_token 内含 `horus_profile` 富 claim**（`username/nickname/dao_name/realm/combat_power` 等）——**`conformIdTokenClaims:false` 运行时确认**（最大未知项已消除）；`aud=horus-client`、`iss`、`nonce` 均正确。
+> - Agent（native·loopback 动态端口 56510）授权码 + PKCE → 回调收 code → Horus `/oidc/exchange`：**真 token 交换 + RS256 验签一枚真 cpplearn id_token + ECDH 派生 K_sess + 建会话**。
+> - Agent 以 K_sess 握手连 WS、上报 115 事件(会话验签)；看板 `/api/exams/{id}/seats` 呈现 **`identity{sub,username,combatPower:86,realm,…}`** + `online:true`。
+> 唯一 harness 折衷：cpplearn dev node 直连 :3939 只发占位页(登录/同意 SPA 由 Caddy 托管)，故 login+consent 用脚本按 Round1 既有交互 API 走(login-interaction finalize→consent confirm→resume)——**该交互机制是 Round1 生产既有、非 M4 改动**;loopback 收 code→exchange→session 全由**真 Agent** 完成。生产走真浏览器+SPA 无此折衷。
 
 ---
 
