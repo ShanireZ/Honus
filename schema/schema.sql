@@ -69,9 +69,17 @@ CREATE TABLE IF NOT EXISTS images (
   height          INTEGER,
   format          TEXT NOT NULL DEFAULT 'webp',
   bytes           INTEGER,
-  uploaded_to_ocr INTEGER NOT NULL DEFAULT 0,         -- 是否已送云 OCR(隐私审计)
+  -- 隐私审计:图**字节是否真出局域网**送云视觉。仅当 SendsOffNetwork 分析器**成功送出**才置 1;
+  -- 本地/mock(不出网)或从未成功送出的图恒 0。**不再兼作处理认领闩锁**(闩锁改用 analysis_state,闭合第三轮 F2 语义冲突)。
+  uploaded_to_ocr INTEGER NOT NULL DEFAULT 0,
+  -- 视觉分析状态(处理闩锁):0=待分析 1=已终结(成功落库 / 派生失败 / 文件缺失等确定态,不再重扫)。
+  -- 与 uploaded_to_ocr 解耦:临时云失败**不置 1** → 保持 0 由补偿重扫拾回(闭合第三轮 F1 临时失败永久漏析)。
+  analysis_state  INTEGER NOT NULL DEFAULT 0,
+  -- 已认领分析的次数(含失败):补偿重扫按 attempts < 上限 重试临时失败,超限则放弃防死循环。
+  analysis_attempts INTEGER NOT NULL DEFAULT 0,
   is_evidence     INTEGER NOT NULL DEFAULT 0          -- 是否被某可疑项引用(归档保留判据)
 );
+CREATE INDEX IF NOT EXISTS ix_images_analysis ON images(exam_id, analysis_state) WHERE analysis_state=0;
 CREATE INDEX IF NOT EXISTS ix_images_seat_ts ON images(exam_id, seat_id, ts);
 CREATE INDEX IF NOT EXISTS ix_images_phash   ON images(exam_id, seat_id, phash);
 

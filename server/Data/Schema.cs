@@ -55,6 +55,11 @@ public static class Schema
     {
         AddColumnIfMissing(conn, "events", "server_risk", "INTEGER");   // M2:服务器侧风险复判
         AddColumnIfMissing(conn, "events", "machine_id", "TEXT");       // M3:落 machineId 以支持哈希链离线复验
+        // 第三轮 F1/F2:把"视觉分析闩锁"从 uploaded_to_ocr(现仅表"真出网")拆到独立列。
+        // 旧库 uploaded_to_ocr=1 的图视为已终结(analysis_state 缺省 0 会被重扫,故迁移时把旧 =1 回填为已终结)。
+        AddColumnIfMissing(conn, "images", "analysis_state", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(conn, "images", "analysis_attempts", "INTEGER NOT NULL DEFAULT 0");
+        BackfillAnalysisState(conn);
         MigrateHeartbeatPk(conn);                                       // 心跳 PK 补 exam/seat 维(旧库重建·心跳短暂可弃)
     }
 
@@ -81,6 +86,15 @@ public static class Schema
                 PRIMARY KEY (exam_id, seat_id, agent_id, ts));
               CREATE INDEX IF NOT EXISTS ix_hb_exam_ts ON agent_heartbeats(exam_id, ts);";
         cmd.ExecuteNonQuery();
+    }
+
+    /// 迁移旧库:旧语义下 uploaded_to_ocr=1 表示"已认领/已分析",新语义把闩锁移到 analysis_state。
+    /// 故把旧的 uploaded_to_ocr=1 且 analysis_state=0 的行标为已终结,避免升级后补偿重扫把全部历史图重新送分析。幂等(重跑 no-op)。
+    private static void BackfillAnalysisState(SqliteConnection conn)
+    {
+        using SqliteCommand c = conn.CreateCommand();
+        c.CommandText = "UPDATE images SET analysis_state=1 WHERE analysis_state=0 AND uploaded_to_ocr=1";
+        c.ExecuteNonQuery();
     }
 
     private static void AddColumnIfMissing(SqliteConnection conn, string table, string column, string decl)
