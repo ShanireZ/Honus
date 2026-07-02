@@ -137,6 +137,67 @@ public class IntegrityTests
     }
 
     [Fact]
+    public async Task 迁移前旧事件缺machineId_标不可验_不误报篡改()
+    {
+        // 闭合审计 High:M3 前落库的旧事件 machine_id=NULL,canonicalCore 含 machineId 无从复算 →
+        // 必须归为 unverifiable,**不能**误报"hash 不符(疑篡改)"污染取证结论。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        using WebSocket ws = await app.ConnectEventsAsync(Exam, Seat, Agent);
+        await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+        await Ws.ReceiveAsync(ws);
+        await SendChainedAsync(ws, 1, "GENESIS");
+
+        // 模拟迁移前旧行:machine_id 置 NULL(内容/hash 未动)
+        Db db = app.Services.GetRequiredService<Db>();
+        db.Write(conn =>
+        {
+            using SqliteCommand c = conn.Cmd("UPDATE events SET machine_id=NULL WHERE exam_id=@e AND seq=1", ("@e", Exam));
+            Assert.Equal(1, c.ExecuteNonQuery());
+        });
+
+        JsonElement rep = await http.GetFromJsonAsync<JsonElement>($"/api/exams/{Exam}/integrity");
+        Assert.True(rep.GetProperty("ok").GetBoolean());                       // 无篡改证据
+        Assert.Equal(1, rep.GetProperty("totalUnverifiable").GetInt32());       // 但诚实标注 1 条不可验
+        Assert.Equal(0, rep.GetProperty("totalHashOk").GetInt32());
+        JsonElement agent = rep.GetProperty("agents")[0];
+        Assert.Equal(1, agent.GetProperty("unverifiable").GetInt32());
+        Assert.Equal(0, agent.GetProperty("hashMismatches").GetArrayLength());  // 关键:不误报篡改
+    }
+
+    [Fact]
+    public async Task 已归档考试_integrity返回applicable_false_不伪装全绿()
+    {
+        // 闭合审计 Med:归档后 live 事件清空,端点不应返回空的 ok:true(误导"已核验干净")。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        using (WebSocket ws = await app.ConnectEventsAsync(Exam, Seat, Agent))
+        {
+            await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
+            await Ws.ReceiveAsync(ws);
+            await SendChainedAsync(ws, 1, "GENESIS");
+        }
+        (await http.PostAsync($"/api/exams/{Exam}/end", null)).EnsureSuccessStatusCode();
+
+        var archive = app.Services.GetRequiredService<Horus.Server.Jobs.ArchiveService>();
+        double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 + 31 * 86400.0;
+        Assert.Equal(1, archive.RunOnce(now).Archived);
+
+        JsonElement rep = await http.GetFromJsonAsync<JsonElement>($"/api/exams/{Exam}/integrity");
+        Assert.Equal("archived", rep.GetProperty("status").GetString());
+        Assert.False(rep.GetProperty("applicable").GetBoolean());
+        Assert.False(rep.TryGetProperty("ok", out _));   // 不再有会被误读为"全绿"的 ok 字段
+
+        // 不存在的考试 → 404
+        HttpResponseMessage nf = await http.GetAsync("/api/exams/NOPE/integrity");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, nf.StatusCode);
+    }
+
+    [Fact]
     public async Task 删除中间事件_审计报链断()
     {
         using var app = new TestApp();

@@ -22,6 +22,15 @@
   "dedupImagesByPhash": true,
   "onlineWindowSeconds": 90,
   "recentRiskWindowSeconds": 300,
+  // M3 归档 / 清理(architecture §13/§15):考试**结束**超 RetentionDays 天后,关键数据(可疑/裁决/高危事件+其证据图/OCR/击键)
+  //   转入 archive 库、其余就地清理、status='archived'、VACUUM 回收空间。仍有 pending 未裁决的考试会**跳过**(不 purge 未决案证据)。
+  "archiveEnabled": true,
+  "retentionDays": 30,
+  // 关键数据判据:事件有效风险(max(agent,server))≥ 此值,或被 suspicious_queue 引用。
+  "archiveCriticalRisk": 50,
+  // 归档库文件(相对 dataDir);后台扫描间隔小时(≤0=关后台,仍可手动 POST /api/archive/run 触发)。
+  "archiveDbPath": "horus-archive.db",
+  "archiveScanIntervalHours": 6,
   // 视觉分析(L2:视觉 LLM 取代 OCR + L3 Logo,合并单一视觉级)。一次调用做文字提取+界面/图标识别+分类。
   // visionProvider: 留空/off=关(默认) | mock(确定性·联调) | openai(OpenAI 兼容端点)。
   //   openai 通吃小米 MiMo-V2.5 / DeepSeek-V4 / Qwen-VL / GLM-4V —— 换供应商=换 baseUrl+model+key。
