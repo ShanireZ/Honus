@@ -44,7 +44,7 @@ public static class OidcEndpoints
                 expiresAt = s.ExpiresAt,
                 profile = new
                 {
-                    sub = s.Sub, username = s.Username, nickname = s.Nickname, daoName = s.DaoName,
+                    sub = s.Sub, userType = s.UserType, username = s.Username, nickname = s.Nickname, daoName = s.DaoName,
                     avatar = s.Avatar, realm = s.Realm, realmLevel = s.RealmLevel, combatPower = s.CombatPower,
                 },
             });

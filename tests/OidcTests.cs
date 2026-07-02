@@ -29,12 +29,34 @@ public class OidcTokenValidatorTests
         OidcClaims c = v.Validate(token, "n1", Now());
 
         Assert.Equal("sub-abc", c.Sub);
+        Assert.Equal("elder", c.UserType);   // M4·RBAC:user_type claim 提取
         Assert.Equal("ye_feng", c.Username);
         Assert.Equal("叶锋", c.Nickname);
         Assert.Equal("问天", c.DaoName);
         Assert.Equal("金丹", c.Realm);
         Assert.Equal(3, c.RealmLevel);
         Assert.Equal(12345, c.CombatPower);
+    }
+
+    [Fact]
+    public void 缺user_type_默认考生_不误授监考()
+    {
+        using RSA rsa = RSA.Create(2048);
+        var v = new OidcTokenValidator(BuildJwks(rsa, Kid), Issuer, Audience);
+        // 手工造一枚**不含 user_type** claim 的合法 id_token(模拟旧 cpplearn / 未请求 horus_profile)。
+        string payload = JsonSerializer.Serialize(new { iss = Issuer, aud = Audience, sub = "sub-x", exp = Now() + 3600, nonce = "n1" });
+        OidcClaims c = v.Validate(SignJwt(rsa, Kid, payload), "n1", Now());
+        Assert.Equal("disciple", c.UserType);   // fail-safe:缺省绝不当监考员
+    }
+
+    [Fact]
+    public void 未知user_type值_归一化为考生()
+    {
+        using RSA rsa = RSA.Create(2048);
+        var v = new OidcTokenValidator(BuildJwks(rsa, Kid), Issuer, Audience);
+        string payload = JsonSerializer.Serialize(new { iss = Issuer, aud = Audience, sub = "sub-y", exp = Now() + 3600, nonce = "n1", user_type = "ADMIN" });
+        OidcClaims c = v.Validate(SignJwt(rsa, Kid, payload), "n1", Now());
+        Assert.Equal("disciple", c.UserType);   // 仅严格 "elder" 才是监考员
     }
 
     [Fact]
@@ -135,6 +157,7 @@ public class OidcTokenValidatorTests
     private static string Payload(string nonce, string sub = "sub-abc", double? exp = null) => JsonSerializer.Serialize(new
     {
         iss = Issuer, aud = Audience, sub, exp = exp ?? Now() + 3600, nonce,
+        user_type = "elder",
         username = "ye_feng", nickname = "叶锋", dao_name = "问天", avatar = "a.png",
         realm = "金丹", realm_level = 3, combat_power = 12345,
     });
@@ -161,7 +184,7 @@ public class OidcIngestAuthTests
     {
         var store = app.Services.GetRequiredService<SessionStore>();
         byte[] k = RandomNumberGenerator.GetBytes(32);
-        var claims = new OidcClaims("sub-" + agent, "user_" + agent, "昵称", "道号", "a.png", "金丹", 3, 999);
+        var claims = new OidcClaims("sub-" + agent, "disciple", "user_" + agent, "昵称", "道号", "a.png", "金丹", 3, 999);
         double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
         HorusSession s = store.Create("E1", seat, agent, "PC", claims, k, now, 180);
         return (s.SessionId, k);

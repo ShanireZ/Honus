@@ -102,9 +102,9 @@ public static class Endpoints
                         (SELECT COALESCE(MAX(MAX(e.risk, COALESCE(e.server_risk,0))),0) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id AND e.ts>=@rc),
                         (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id),
                         (SELECT COUNT(*) FROM suspicious_queue q WHERE q.exam_id=s.exam_id AND q.seat_id=s.seat_id AND q.status='pending'),
-                        sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power
+                        sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power, sess.user_type
                       FROM seats s
-                      LEFT JOIN (SELECT exam_id, seat_id, sub, username, nickname, dao_name, avatar, realm, realm_level, combat_power, MAX(issued_at) AS mx
+                      LEFT JOIN (SELECT exam_id, seat_id, sub, username, nickname, dao_name, avatar, realm, realm_level, combat_power, user_type, MAX(issued_at) AS mx
                                  FROM oidc_sessions GROUP BY exam_id, seat_id) sess
                         ON sess.exam_id=s.exam_id AND sess.seat_id=s.seat_id
                       WHERE s.exam_id=@e ORDER BY s.seat_id",
@@ -140,6 +140,8 @@ public static class Endpoints
                             realm = NullStr(r, 15),
                             realmLevel = NullInt(r, 16),
                             combatPower = NullInt(r, 17),
+                            // M4·RBAC:'elder'=监考员 / 'disciple'=考生(看板可据此标注/筛选身份)
+                            userType = NullStr(r, 18),
                         },
                     });
                 }

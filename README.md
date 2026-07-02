@@ -27,7 +27,7 @@ agent/                     C#/.NET 采集端骨架(Horus.Agent)
 ```
 
 ## 状态
-**M1–M3 已实现并端到端验证(130 项测试全绿)**:M1 采集/握手/续传/断线重连 + ingest 落库/幂等/看板/人工裁决;M2 视觉 LLM 识图(取代 OCR+Logo·小米 MiMo-V2.5)+ 服务器侧 `server_risk` 复判 + 击键 KSK 会话签名 + admin HttpOnly cookie + DB 读写分离;M3 哈希链完整性复验(ingest `bad_hash` 拒收 + 离线审计)+ 归档/清理作业。**待做**:CLIP 按图搜图(需 sqlite-vec + CLIP ONNX)、击键前端埋点(判题网页·本仓外)、学员机 OIDC 登录(per-user 身份·见架构 §10.1)。里程碑见 [docs/architecture-v0.2.md](docs/architecture-v0.2.md) §15。
+**M1–M4 已实现并端到端验证(144 项测试全绿)**:M1 采集/握手/续传/断线重连 + ingest 落库/幂等/看板/人工裁决;M2 视觉 LLM 识图(取代 OCR+Logo·小米 MiMo-V2.5)+ 服务器侧 `server_risk` 复判 + 击键 KSK 会话签名 + admin HttpOnly cookie + DB 读写分离;M3 哈希链完整性复验(ingest `bad_hash` 拒收 + 离线审计)+ 归档/清理作业;**M4 身份层 cpplearn OIDC 取代共享 PSK**(Agent 经 cpplearn 授权码+PKCE 登录 → ECDH 会话密钥签名 → 闭合 A1 跨身份栽赃 + A2 seq 抢占·见 [docs/m4-identity-oidc.md](docs/m4-identity-oidc.md))。**进行中(M4·RBAC)**:cpplearn 角色映射——`user_type='elder'`(长老)=监考员/管理端权限,`'disciple'`(弟子)=参考学员(考生);OIDC 身份取代看板死令牌。**待做**:CLIP 按图搜图(需 sqlite-vec + CLIP ONNX)、击键前端埋点(判题网页·本仓外)、Agent 防卸载 / 多服务器。里程碑见 [docs/architecture-v0.2.md](docs/architecture-v0.2.md) §15。
 
 ## 关键设计取舍
 - **预防层为零**:不控考场网络、不做主机防火墙 → 浏览器 URL 监控是第一防线,只能事后取证、不可阻断。

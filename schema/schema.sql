@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS oidc_sessions (
   agent_id     TEXT NOT NULL,
   machine_id   TEXT,
   sub          TEXT NOT NULL,                          -- cpplearn 稳定身份(UUID)
+  user_type    TEXT,                                    -- M4·RBAC:'elder'(长老=监考员)| 'disciple'(参考学员=考生)
   username     TEXT, nickname TEXT, dao_name TEXT, avatar TEXT, realm TEXT,
   realm_level  INTEGER, combat_power INTEGER,
   k_sess       TEXT NOT NULL,                          -- base64(32B) ECDH 派生会话密钥(HMAC 签名密钥)

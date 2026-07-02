@@ -66,6 +66,9 @@ public sealed class OidcTokenValidator
 
         return new OidcClaims(
             Sub: sub!,
+            // M4·RBAC:cpplearn horus_profile 的角色 claim。'elder'=长老=监考员(可进管理端),其余=参考学员(考生)。
+            // **缺省 fail-safe 到 'disciple'**:claim 缺失(旧 cpplearn / 未请求 horus_profile)时按最小权限当考生,绝不误授监考权。
+            UserType: NormalizeUserType(Str(payload, "user_type")),
             Username: Str(payload, "username") ?? "",
             Nickname: Str(payload, "nickname") ?? Str(payload, "name") ?? "",
             DaoName: Str(payload, "dao_name") ?? "",
@@ -125,10 +128,15 @@ public sealed class OidcTokenValidator
     private static int Int(JsonElement o, string k)
         => o.ValueKind == JsonValueKind.Object && o.TryGetProperty(k, out JsonElement e)
            && e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out int v) ? v : 0;
+
+    /// 归一化角色:仅 "elder" 认作监考员,其余(含 null/空/未知值)一律 "disciple"(最小权限·fail-safe)。
+    internal static string NormalizeUserType(string? raw)
+        => string.Equals(raw, "elder", StringComparison.Ordinal) ? "elder" : "disciple";
 }
 
 /// 验签通过后的 cpplearn 身份 + Horus 富画像(见 cpplearn claims horus_profile)。
+/// UserType:'elder'(长老=监考员)| 'disciple'(参考学员=考生),M4·RBAC 用。
 public sealed record OidcClaims(
-    string Sub, string Username, string Nickname, string DaoName, string Avatar, string Realm, int RealmLevel, int CombatPower);
+    string Sub, string UserType, string Username, string Nickname, string DaoName, string Avatar, string Realm, int RealmLevel, int CombatPower);
 
 public sealed class OidcValidationException(string message) : Exception(message);

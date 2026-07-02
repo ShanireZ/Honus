@@ -55,6 +55,7 @@ public static class Schema
     {
         AddColumnIfMissing(conn, "events", "server_risk", "INTEGER");   // M2:服务器侧风险复判
         AddColumnIfMissing(conn, "events", "machine_id", "TEXT");       // M3:落 machineId 以支持哈希链离线复验
+        AddColumnIfMissing(conn, "oidc_sessions", "user_type", "TEXT"); // M4·RBAC:会话绑定的角色('elder'/'disciple')
         // 第三轮 F1/F2:把"视觉分析闩锁"从 uploaded_to_ocr(现仅表"真出网")拆到独立列。
         // 旧库 uploaded_to_ocr=1 的图视为已终结(analysis_state 缺省 0 会被重扫,故迁移时把旧 =1 回填为已终结)。
         AddColumnIfMissing(conn, "images", "analysis_state", "INTEGER NOT NULL DEFAULT 0");

@@ -197,6 +197,46 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
 
 ---
 
+## 10. M4·RBAC —— 角色→权限映射（owner 2026-07-02 拍板 + 实现进度）
+
+M4 的 OIDC 只把身份用在**采集面防栽赃**（A1/A2）；身份的**授权语义**（谁是考生、谁是监考员）此前为零——看板/管理端仍靠**独立的静态 `adminToken`**，与 cpplearn 身份无任何关联。M4·RBAC 补上这层。
+
+### 10.1 已锁定决策（owner 2026-07-02）
+
+| # | 决策点 | 选定 | 说明 |
+|---|---|---|---|
+| R1 | 角色语义 | **弟子=参考学员(考生)·长老=监考员(有 Horus 管理端权限)** | cpplearn `users.role='admin'` → 监考员；`'user'` → 考生 |
+| R2 | 监考员判定粒度 | **任何长老(role=admin)即监考员** | 不新增 cpplearn 权限键；`user_type='elder'` 即可 |
+| R3 | 看板/管理端鉴权 | **OIDC 完全取代静态 `adminToken`（无后门）** | 认证长老才能进管理端；弟子即使登录也拒管理端 |
+| R4 | 角色载体 | **cpplearn `horus_profile` 新增 `user_type` claim** | `'elder'‖'disciple'`，随 id_token 离线可读（复用 `resolveIdentityUserType`） |
+
+> **fail-closed 取舍（诚实标注·owner 已知选此）**：R3 下若考试当天 cpplearn 不可达 → 无法签发/验证长老身份 → **管理端无令牌兜底、进不去**。缓解：**考前监考员先登录**（会话有效期 = 考试时长，登录后不再依赖 cpplearn）+ 考前连通性预检。若日后需应急后门，另行拍板（当前明确不留）。
+
+### 10.2 已实现（本批·加性·144 测试全绿·0 警告）
+
+**cpplearn 侧（`Cpplearn` 仓·未 commit·65 套/266 用例全绿·生产/Round1 零影响）**：
+- `server/oidc/claims.js`：`HORUS_PROFILE_CLAIMS` 加 `user_type`；`buildHorusProfileClaims` 输出 `user_type`（空/非法回落 `disciple`）。
+- `server/oidc/account.js`：`loadHorusProfileClaims` 查 `role` 列，复用 `resolveIdentityUserType` 算 `user_type`。
+- `server/oidc/identityCore.js`：导出既有 `resolveIdentityUserType`（此前未导出）。
+- 门控不变：`user_type` 仅在请求 `horus_profile` scope 时出现，Round1 的 `name/email/sub` 未动。
+
+**Horus 侧（已 build+test 绿）**：
+- `OidcTokenValidator`：提取 `user_type` → `OidcClaims.UserType`；`NormalizeUserType` **仅 `"elder"` 认监考员，其余(含缺失)一律 `disciple`**（fail-safe，绝不误授）。
+- `SessionStore`/`HorusSession`：会话持久化 `user_type`（schema `oidc_sessions` 加列 + `AddColumnIfMissing` 幂等迁移·旧行 NULL→`disciple`）；新增 `HorusSession.IsElder`。
+- `/oidc/exchange` profile 与 `/api/exams/{id}/seats` 的 `identity` 均带 `userType`（看板可据此标注/筛选）。
+- 新增回归：`user_type` 提取 / 缺省考生 / 未知值归一化为考生。
+
+### 10.3 待实现（下一步·需最终确认设计）
+
+- **S8 监考员看板 OIDC 登录流 + 管理端授权改造（取代静态令牌）**：
+  - **拓扑假设**：监考员在**监考服务器本机浏览器**（localhost）操作看板 → 回调落 `http://127.0.0.1:<serverPort>/cb`（cpplearn horus client 为 `application_type:native`，端口无关匹配 loopback；路径须 `/cb`）。**残留**：远端监考工作站（另一台 LAN 机）用 loopback 回调无法落回服务器，首版不支持，靠"监考员在服务器机操作"约束兜底（架构里监考服务器笔记本即复核台）。
+  - **端点**：`GET /admin/login`（服务器生成 PKCE+state+nonce，重定向浏览器到 cpplearn `/authorize`）；`GET /cb`（换 token → 验 id_token → **要求 `user_type='elder'`** → 建**管理会话** → 种 HttpOnly cookie `horus_admin`=管理会话 id → 跳看板；非长老 → 403）。
+  - **gate 改造**（`Program.cs` admin gate）：由 `FixedTimeEquals(cookie, adminToken)` 改为**校验管理会话表**（长老会话·有寿命）。静态 `adminToken` 依 R3 退役（保留 `allowInsecure` 联调路径 + 测试用 mock）。
+  - **测试面**：现有 admin 401/200/cookie/`?t=` 用例需改走 OIDC 长老会话；补 mock OIDC provider 覆盖"长老进/弟子拒/过期拒"。
+- **S9 看板前端接入身份画像**：`/seats` 已返回 `identity{…,userType}`，前端座位抽屉渲染用户名/道号/境界/战力/头像 + 角色标注（现为死代码未渲染）。
+
+---
+
 ## 调研证据（只读核验，绝对路径）
 - cpplearn provider：`Cpplearn/server/oidc/provider.js`（init/features/PKCE/JWKS/RS256 强制）
 - cpplearn 配置：`Cpplearn/config/oauth.js`（issuer/grant/scope/单 round1 client/auth_method）
