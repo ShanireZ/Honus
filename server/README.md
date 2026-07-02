@@ -11,7 +11,7 @@
 ## 构建 / 测试
 ```bash
 dotnet build ../Horus.sln -c Debug     # 全量(含 Agent，走 net8.0-windows)
-dotnet test  ../Horus.sln -c Debug     # 端到端测试(10 项)
+dotnet test  ../Horus.sln -c Debug     # 端到端测试(92 项)
 ```
 
 ## 运行
@@ -40,9 +40,9 @@ dotnet run -c Debug                                # 或运行已发布 exe
 
 ## 端点
 **采集端（Agent ↔ Server）**
-- `GET  /ingest/events`（WebSocket）— 握手校验 `X-Horus-Auth`；每事件校验 `sig`；幂等落库 `(agent_id,seq,type)`；risk≥阈值入可疑队列。
-- `POST /ingest/images` — 校验 `X-Horus-Sig`；pHash 去重；原图存 `dataDir/images/<exam>/<seat>/<id>.webp`。
-- `POST /ingest/keystroke` — 判题前端旁路，击键节奏落库 + 基础风险初判。
+- `GET  /ingest/events`（WebSocket）— 握手校验 `X-Horus-Auth`；每事件校验 `sig` + **哈希链复算**(`bad_hash` 拒收)；幂等落库 `(agent_id,seq)`；**服务器独立复判 `server_risk`**，有效风险≥阈值入可疑队列。
+- `POST /ingest/images` — 校验 `X-Horus-Sig`；pHash 去重；原图存 `dataDir/images/<exam>/<seat>/<id>.webp`；触发型异步送**视觉 LLM 分析**(L2)。
+- `POST /ingest/keystroke` — 判题后端旁路，**KSK 会话签名**(`X-Horus-KSig`)防伪造/栽赃 + 幂等防重放；击键节奏落库 + 基础风险初判。
 
 **看板 / 复核（只读 + 写）**
 - `GET  /api/exams` · `/api/exams/{examId}/seats` · `/{examId}/suspicious?status=` · `/{examId}/events?seatId=&limit=`
@@ -50,6 +50,8 @@ dotnet run -c Debug                                # 或运行已发布 exe
 - `POST /api/exams`（建考试+座位）· `/api/exams/{examId}/end` · `/api/suspicious/{id}/decide`（人工裁决）
 - `POST /api/exams/{examId}/config` — 下发**配置热更新**给该考试在线 Agent（白名单/阈值/截图参数），返回 `pushedTo`；新连/重连 Agent 在 hello 时补推。
 
-## M1 边界（见 architecture §15）
-- **已实现**：ingest 落库 / 幂等去重 / 图片存盘去重 / HMAC 验签 / 可疑队列 / 看板 + 人工裁决。
-- **未实现（M2/M3）**：云 OCR（L2）、Logo 模板（L3）、CLIP 向量检索、完整哈希链复验、归档作业。启动时按权威 `schema.sql` 建表，M1 跳过 `vec0` 虚表（需 sqlite-vec 扩展，属 M3）。
+## 实现进度（见 architecture §15）
+- **M1 已实现**：ingest 落库 / 幂等去重 / 图片存盘去重 / HMAC 验签 / 可疑队列 / 看板 + 人工裁决 + Agent 采集/握手/续传/断线重连。
+- **M2 已实现**：**L2 视觉 LLM 识图**(取代 OCR+Logo·provider-agnostic·小米 MiMo-V2.5)+ 服务器侧 `server_risk` 复判 + keystroke KSK 会话签名 + admin HttpOnly cookie + DB 读写分离。
+- **M3 已实现**：**哈希链完整性复验**(ingest 复算 `bad_hash` 拒收 + 离线 `GET /api/exams/{id}/integrity` 审计:锚点/sig/链连续/重启边界) + **归档作业** `ArchiveService`(到龄考试关键数据转 archive 库 + 清理 live + VACUUM)。
+- **待做**：CLIP 按图搜图(需 sqlite-vec + CLIP ONNX,`vec_images` 虚表预留但 M1 起跳过) + 击键前端埋点(判题网页,本仓外)。启动时按权威 `schema.sql` 建表，跳过 `vec0` 虚表（需 sqlite-vec 扩展）。
