@@ -144,6 +144,19 @@ public class ArchiveTests
         Assert.False(File.Exists(evLive), "证据图应已从 live 迁走");
         Assert.True(File.Exists(evCold), "证据图应在 archive 冷存");
         Assert.False(File.Exists(baseLive), "非关键基线图应被清理");
+
+        // F3(第三轮):归档后证据图/元数据仍可经 HTTP 取证读取(此前 live 行删掉后 /api/images 一律 404)。
+        HttpResponseMessage imgResp = await http.GetAsync($"/api/images/{cidEv}");
+        Assert.Equal(HttpStatusCode.OK, imgResp.StatusCode);
+        Assert.True((await imgResp.Content.ReadAsByteArrayAsync()).Length > 0);   // 冷存字节送出
+        JsonElement meta = await http.GetFromJsonAsync<JsonElement>($"/api/images/{cidEv}/meta");
+        Assert.True(meta.GetProperty("archived").GetBoolean());
+        // 归档考试只读复核端点:汇总 + 裁决 + 关键事件 + 证据图都可读回
+        JsonElement arc = await http.GetFromJsonAsync<JsonElement>($"/api/archive/exams/{Exam}");
+        Assert.True(arc.GetProperty("archived").GetBoolean());
+        Assert.Equal(1, arc.GetProperty("adjudications").GetArrayLength());
+        Assert.Equal(1, arc.GetProperty("images").GetArrayLength());
+        Assert.True(arc.GetProperty("events").GetArrayLength() >= 1);
     }
 
     [Fact]
