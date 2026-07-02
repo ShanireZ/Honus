@@ -44,8 +44,10 @@ public sealed record ServerConfig
     public int VisionConfidenceThreshold { get; init; } = 60;
     /// 是否也分析随机基线图(默认 false = 只分析触发型,§5 最小化上传/成本)。
     public bool VisionAnalyzeBaseline { get; init; }
-    /// 补偿重扫间隔(分钟):周期性拾回 uploaded_to_ocr=0 的触发型证据图(被队列丢弃 / 服务器重启丢内存队列的)。默认 5;≤0=关闭。
+    /// 补偿重扫间隔(分钟):周期性拾回 analysis_state=0 的触发型证据图(被队列丢弃 / 服务器重启丢内存队列 / 临时云失败的)。默认 5;≤0=关闭。
     public double VisionBackstopMinutes { get; init; } = 5;
+    /// 单张图视觉分析的最大认领次数(含失败):临时云失败由补偿重扫重试,达此上限则放弃(防端点持续失败时死循环重扫)。默认 5。
+    public int VisionMaxAttempts { get; init; } = 5;
 
     // ---- §5 送云前的派生处理(owner 决策 2026-07-02:不再打码/裁剪,只降采样;供应商=境内云 MiMo·PIPL 无跨境)----
     /// 送云图长边像素上限(降采样·省 token/少送无关像素·顺带剥离元数据)。默认 1600;0=不降采样直通。

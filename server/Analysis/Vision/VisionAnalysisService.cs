@@ -87,12 +87,13 @@ public sealed class VisionAnalysisService : BackgroundService
                 var ids = _db.Read(conn =>
                 {
                     var list = new List<string>();
+                    // 拾回 analysis_state=0(未终结:临时云失败/被拒队/重启丢队)且 attempts 未超上限的图(闭合 F1)。
                     // 排除归档中/已归档考试的图(不给归档窗口塞新分析结果 → 避免孤儿 pending)。
                     using SqliteCommand c = conn.Cmd(
                         @"SELECT i.image_id FROM images i JOIN exams e ON i.exam_id=e.exam_id
-                          WHERE i.uploaded_to_ocr=0" + triggerFilter + @"
+                          WHERE i.analysis_state=0 AND i.analysis_attempts<@max" + triggerFilter + @"
                             AND e.status NOT IN ('archiving','archived')
-                          ORDER BY i.recv_ts LIMIT 500");
+                          ORDER BY i.recv_ts LIMIT 500", ("@max", _cfg.VisionMaxAttempts));
                     using SqliteDataReader r = c.ExecuteReader();
                     while (r.Read()) list.Add(r.GetString(0));
                     return list;
@@ -112,8 +113,10 @@ public sealed class VisionAnalysisService : BackgroundService
 
     private async Task AnalyzeOneAsync(string imageId, CancellationToken ct)
     {
-        // **原子占位**:取元数据 → 查考试未封存 → UPDATE uploaded_to_ocr 0→1 抢到(rowcount=1)才分析 —— 同一写锁 body 内完成,
+        // **原子认领**:取元数据 → 查考试未封存 → UPDATE analysis_attempts+1 抢到(rowcount=1·attempts<上限·未终结)才分析 —— 同一写锁 body 内,
         // 杜绝"读→分析→写"跨 await 的 TOCTOU(重复分析 / 重复入可疑队列),并对归档中/已归档考试短路(不塞孤儿分析)。
+        // **认领不置 uploaded_to_ocr**(那是"真出网"隐私审计,仅 SendsOffNetwork 分析器真送出才置)——闩锁改用 analysis_state/attempts,
+        // 使临时云失败(v=null 不终结)可由补偿重扫按 attempts<上限 重试,不再永久漏析(闭合 F1/F2)。
         ImgMeta? meta = _db.Write<ImgMeta?>(conn =>
         {
             ImgMeta? m = null;
@@ -123,33 +126,49 @@ public sealed class VisionAnalysisService : BackgroundService
                 if (r.Read()) m = new ImgMeta(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3));
             if (m is null || conn.IsExamSealed(m.Exam)) return null;
             using SqliteCommand claim = conn.Cmd(
-                "UPDATE images SET uploaded_to_ocr=1 WHERE image_id=@id AND uploaded_to_ocr=0", ("@id", imageId));
-            return claim.ExecuteNonQuery() > 0 ? m : null;   // 抢到才分析;抢不到=已分析/占用
+                "UPDATE images SET analysis_attempts=analysis_attempts+1 WHERE image_id=@id AND analysis_state=0 AND analysis_attempts<@max",
+                ("@id", imageId), ("@max", _cfg.VisionMaxAttempts));
+            return claim.ExecuteNonQuery() > 0 ? m : null;   // 抢到才分析;抢不到=已终结/占用/超上限
         });
         if (meta is null) return;
 
         string? full = _storage.Resolve(meta.File);
-        if (full is null || !File.Exists(full)) return;   // 文件已归档/清理 → 已占位,不重试
+        if (full is null || !File.Exists(full)) { MarkTerminal(imageId); return; }   // 文件已归档/清理:确定态 → 终结,不重扫
         byte[] original = await File.ReadAllBytesAsync(full, ct);
 
         // §5 送云前降采样 + 剥离元数据,只送派生字节(原图字节只读、永不出网)。
-        // 联网分析器(SendsOffNetwork=true):无法安全派生(解码失败)→ Prepare 返 null → 跳过,绝不泄未剥元数据的原图。
+        // 联网分析器(SendsOffNetwork=true):无法安全派生(解码失败)→ Prepare 返 null → 终结跳过(确定态·重扫也解不开),绝不泄未剥元数据的原图。
         byte[]? derived = VisionImagePrep.Prepare(original, _cfg, _analyzer!.SendsOffNetwork);
         if (derived is null)
         {
             _log.LogWarning("送云图无法安全派生(解码失败),跳过分析以免泄原图 image={Image}", imageId);
+            MarkTerminal(imageId);   // 派生失败是确定态(坏图每次都解不开)→ 终结,免补偿重扫死循环
             return;
         }
 
+        // 隐私审计:仅**联网分析器**在真正送出字节前置 uploaded_to_ocr=1(mock/本地不出网恒 0,不再撒谎)。
+        if (_analyzer!.SendsOffNetwork)
+            _db.Write(conn => { using SqliteCommand u = conn.Cmd(
+                "UPDATE images SET uploaded_to_ocr=1 WHERE image_id=@id", ("@id", imageId)); u.ExecuteNonQuery(); });
+
         VisionVerdict? v = await _analyzer!.AnalyzeAsync(
             derived, new VisionContext(meta.Exam, meta.Seat, imageId, meta.Trigger), ct);
-        if (v is null) return;   // 分析失败(已占位·fail-open 不重试,与原行为一致;云端错误由 adapter 记日志)
+        if (v is null)
+        {
+            // 临时失败(超时/5xx/网络/空 content/解析失败):**不终结**(analysis_state 保持 0)→ 补偿重扫按 attempts<上限 重试(闭合 F1)。
+            _log.LogWarning("视觉分析未得结果(临时失败),保留待补偿重扫 image={Image}", imageId);
+            return;
+        }
 
         double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
         _db.Write(conn =>
         {
-            // 分析期间(await 云调用)考试可能已进入归档:此刻图行可能已被删,写结果会 FK 失败 / 造孤儿 pending → 短路。
+            // 分析期间(await 云调用)考试可能已进入归档:此刻图行可能已被删,写结果会 FK 失败 / 造孤儿 pending → 短路(不终结,归档已接管)。
             if (conn.IsExamSealed(meta.Exam)) return;
+
+            // 得到判定 → 终结(成功态,不再重扫)。
+            using (SqliteCommand fin = conn.Cmd("UPDATE images SET analysis_state=1 WHERE image_id=@id", ("@id", imageId)))
+                fin.ExecuteNonQuery();
 
             // 落 ocr_results(engine/text/hits/confidence);同图幂等
             using (SqliteCommand ins = conn.Cmd(
@@ -177,6 +196,28 @@ public sealed class VisionAnalysisService : BackgroundService
                     ("@c", v.Confidence), ("@eid", eventId.Value)))
                     br.ExecuteNonQuery();
 
+            // F4 去重:若该事件已有 pending 队列项(ingest 期元数据信号入的),不再另插一条视觉重复项——
+            // 而是把视觉证据并入该行 note 并把 score 抬到 max(避免同一事同图两条 pending、人工裁决两次、看板计数翻倍)。
+            if (eventId is not null)
+            {
+                long? existing = null;
+                using (SqliteCommand fx = conn.Cmd(
+                    @"SELECT id FROM suspicious_queue WHERE exam_id=@e AND status='pending' AND refs LIKE @pat LIMIT 1",
+                    ("@e", meta.Exam), ("@pat", $"%\"event:{eventId.Value}\"%")))
+                {
+                    object? o = fx.ExecuteScalar();
+                    if (o is not null and not DBNull) existing = Convert.ToInt64(o);
+                }
+                if (existing is not null)
+                {
+                    using SqliteCommand up = conn.Cmd(
+                        @"UPDATE suspicious_queue SET score=MAX(score,@sc), note=COALESCE(note,'')||@vn WHERE id=@id",
+                        ("@sc", v.Confidence), ("@vn", " | vision:" + v.Evidence), ("@id", existing.Value));
+                    up.ExecuteNonQuery();
+                    return;   // 已合并进既有 pending,不另插
+                }
+            }
+
             var refs = new List<string> { $"image:{imageId}" };
             if (eventId is not null) refs.Add($"event:{eventId.Value}");
             using (SqliteCommand q = conn.Cmd(
@@ -188,4 +229,9 @@ public sealed class VisionAnalysisService : BackgroundService
                 q.ExecuteNonQuery();
         });
     }
+
+    /// 把图标为已终结(analysis_state=1):确定态失败(文件缺失 / 派生失败)不由补偿重扫重试。
+    private void MarkTerminal(string imageId)
+        => _db.Write(conn => { using SqliteCommand c = conn.Cmd(
+            "UPDATE images SET analysis_state=1 WHERE image_id=@id", ("@id", imageId)); c.ExecuteNonQuery(); });
 }
