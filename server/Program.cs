@@ -4,6 +4,7 @@ using Horus.Server.Api;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Ingest;
+using Horus.Server.Jobs;
 
 // ---- 密钥加密工具:`Horus.Server protect-secret <明文key>` 打印 DPAPI 密文,粘进 config 的 visionApiKeyEnc(不存明文) ----
 if (args.Length >= 1 && args[0] == "protect-secret")
@@ -100,6 +101,10 @@ if (cfg.VisionEnabled)
 }
 builder.Services.AddSingleton<VisionAnalysisService>();               // 未注册 IVisionAnalyzer 时内部 no-op
 builder.Services.AddHostedService(sp => sp.GetRequiredService<VisionAnalysisService>());
+
+// ---- M3 归档 / 清理作业:每日扫描到龄考试转 archive 库 + 清理 live(§13/§15)。ArchiveEnabled=false 时不起后台 ----
+builder.Services.AddSingleton<ArchiveService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ArchiveService>());
 
 WebApplication app = builder.Build();
 

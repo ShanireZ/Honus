@@ -39,6 +39,34 @@ public sealed class Storage
         return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
     }
 
+    // ---- M3 归档:证据图迁冷存 / 清理非关键图 ----
+
+    /// 归档冷存相对路径:archive/&lt;exam&gt;/&lt;seat&gt;/&lt;imageId&gt;.webp。
+    public static string ArchiveRelPath(string examId, string seatId, string imageId)
+        => $"archive/{Safe(examId)}/{Safe(seatId)}/{imageId}.webp";
+
+    /// 证据图迁入冷存,返回新相对路径。**幂等**:源在则移动;源已不在但目标已存在(重跑)→ 直接返回;
+    /// 源与目标都在(重跑残留)→ 删源保目标。目录自动创建。
+    public string MoveToArchive(string liveRel, string examId, string seatId, string imageId)
+    {
+        string archiveRel = ArchiveRelPath(examId, seatId, imageId);
+        string dstFull = Path.Combine(_root, archiveRel);
+        Directory.CreateDirectory(Path.GetDirectoryName(dstFull)!);
+        string? srcFull = Resolve(liveRel);
+        bool srcOk = srcFull is not null && File.Exists(srcFull);
+        bool dstOk = File.Exists(dstFull);
+        if (srcOk && !dstOk) File.Move(srcFull!, dstFull);
+        else if (srcOk && dstOk) File.Delete(srcFull!);   // 目标已在(重跑),删残留源
+        return archiveRel;
+    }
+
+    /// 删除 live 原图(清理非关键)。越界 / 不存在均静默忽略。
+    public void DeleteLive(string liveRel)
+    {
+        string? f = Resolve(liveRel);
+        if (f is not null && File.Exists(f)) File.Delete(f);
+    }
+
     private static string Safe(string s)
     {
         var sb = new StringBuilder(s.Length);

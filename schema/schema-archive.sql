@@ -74,6 +74,20 @@ CREATE TABLE IF NOT EXISTS archive_logo_hits (
   created_at REAL
 );
 
+-- 关键击键样本(被裁决引用 或 risk>=阈值)长期留存 ----------------
+-- confirmed 裁决可能唯一证据就是击键时间线/特征(整段粘贴/空窗后突现整段代码),必须随裁决一并归档。
+CREATE TABLE IF NOT EXISTS archive_keystroke_samples (
+  id            INTEGER PRIMARY KEY,                  -- 沿用 live keystroke_samples.id
+  exam_id       TEXT NOT NULL,
+  seat_id       TEXT NOT NULL,
+  submission_id TEXT,
+  ts            REAL NOT NULL,
+  timeline      TEXT,                                 -- JSON: keydown 时间戳序列
+  features      TEXT,                                 -- JSON: pasteCount/maxBurstCharsPerSec/idleThenBlock 等
+  risk          INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_akeystroke_seat ON archive_keystroke_samples(exam_id, seat_id, ts);
+
 -- 裁决结论(已 confirmed/dismissed)长期留存 --------------------
 CREATE TABLE IF NOT EXISTS archive_adjudications (
   id          INTEGER PRIMARY KEY,                    -- 沿用 live suspicious_queue.id

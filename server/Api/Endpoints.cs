@@ -5,6 +5,7 @@ using Horus.Server.Analysis;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Ingest;
+using Horus.Server.Jobs;
 using Microsoft.Data.Sqlite;
 
 namespace Horus.Server.Api;
@@ -21,6 +22,7 @@ public static class Endpoints
         Storage storage = app.Services.GetRequiredService<Storage>();
         ServerConfig cfg = app.Services.GetRequiredService<ServerConfig>();
         AgentHub hub = app.Services.GetRequiredService<AgentHub>();
+        ArchiveService archive = app.Services.GetRequiredService<ArchiveService>();
 
         // ---- 登录:校验令牌 → 下发 HttpOnly cookie(免受 admin gate;否则拿不到 cookie 就进不来) ----
         // cookie 值 = 管理令牌;JS 读不到(HttpOnly),SameSite=Strict 防 CSRF。gate 用 FixedTimeEquals 比对。
@@ -301,6 +303,13 @@ public static class Endpoints
             if (body is not JsonObject) return Results.BadRequest(new { error = "config 必须是对象" });
             int pushedTo = await hub.PushConfigAsync(examId, body.ToJsonString(), ctx.RequestAborted);
             return Results.Json(new { ok = true, examId, pushedTo });
+        });
+
+        // 归档作业手动触发(运维):立即扫描到龄考试并归档 + 清理。后台每 6h 也自动跑。返回本次报告。
+        app.MapPost("/api/archive/run", (HttpContext ctx) =>
+        {
+            ArchiveService.Report report = archive.RunOnce(Now(), ctx.RequestAborted);
+            return Results.Json(report);
         });
 
         // 可疑裁决(人工)
