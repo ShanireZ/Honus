@@ -226,14 +226,18 @@ M4 的 OIDC 只把身份用在**采集面防栽赃**（A1/A2）；身份的**授
 - `/oidc/exchange` profile 与 `/api/exams/{id}/seats` 的 `identity` 均带 `userType`（看板可据此标注/筛选）。
 - 新增回归：`user_type` 提取 / 缺省考生 / 未知值归一化为考生。
 
-### 10.3 待实现（下一步·需最终确认设计）
+### 10.3 待实现（下一步·设计已定案 owner 2026-07-02）
 
-- **S8 监考员看板 OIDC 登录流 + 管理端授权改造（取代静态令牌）**：
-  - **拓扑假设**：监考员在**监考服务器本机浏览器**（localhost）操作看板 → 回调落 `http://127.0.0.1:<serverPort>/cb`（cpplearn horus client 为 `application_type:native`，端口无关匹配 loopback；路径须 `/cb`）。**残留**：远端监考工作站（另一台 LAN 机）用 loopback 回调无法落回服务器，首版不支持，靠"监考员在服务器机操作"约束兜底（架构里监考服务器笔记本即复核台）。
-  - **端点**：`GET /admin/login`（服务器生成 PKCE+state+nonce，重定向浏览器到 cpplearn `/authorize`）；`GET /cb`（换 token → 验 id_token → **要求 `user_type='elder'`** → 建**管理会话** → 种 HttpOnly cookie `horus_admin`=管理会话 id → 跳看板；非长老 → 403）。
-  - **gate 改造**（`Program.cs` admin gate）：由 `FixedTimeEquals(cookie, adminToken)` 改为**校验管理会话表**（长老会话·有寿命）。静态 `adminToken` 依 R3 退役（保留 `allowInsecure` 联调路径 + 测试用 mock）。
-  - **测试面**：现有 admin 401/200/cookie/`?t=` 用例需改走 OIDC 长老会话；补 mock OIDC provider 覆盖"长老进/弟子拒/过期拒"。
-- **S9 看板前端接入身份画像**：`/seats` 已返回 `identity{…,userType}`，前端座位抽屉渲染用户名/道号/境界/战力/头像 + 角色标注（现为死代码未渲染）。
+**R5 拓扑（owner 拍板：本机 + 远端 LAN 监考工作站都要支持）**：因 cpplearn horus client 是 `native+loopback`（仅 `127.0.0.1` 回调）、远端工作站浏览器的 loopback 回不到服务器，故**监考服务器启用自签名 HTTPS** + cpplearn **新增第二个 `horus-dashboard` web client**（confidential·`redirect=https://<服务器>/cb`·authorization_code+PKCE·scope `openid horus_profile`）。远端/本机浏览器均经 https 直达服务器 `/cb`，走**标准服务器端授权码流**，无需每台装助手。**Agent 仍用原 native+loopback client 不变**。
+
+- **S8 监考员看板 OIDC 登录 + 管理端授权改造（OIDC 取代静态令牌·R3）**：
+  - **端点**：`GET /admin/login`（生成 state+nonce+PKCE·存 pending·重定向浏览器到 cpplearn `/authorize`）；`GET /cb`（校验 state → 换 token（dashboard client secret）→ 验 id_token（aud=horus-dashboard）→ **要求 `user_type='elder'`** → 建管理会话 → 种 HttpOnly cookie `horus_admin`=会话 id → 跳看板；**非长老 → 403**）。
+  - **管理会话**：`admin_sessions` 表（sessionId→{sub,username,userType,issuedAt,expiresAt}·寿命 = 考试时长）；`Program.cs` admin gate 由 `FixedTimeEquals(cookie, adminToken)` 改为**校验 admin_sessions（须 elder·未过期）**。静态 `adminToken` 依 R3 在安全模式退役（仅 `allowInsecure` 联调 + 测试 mint 会话）。
+  - **HTTPS**：Kestrel 自签证书（启动生成 / 加载·SAN 含服务器 IP / 主机名）；首用点过浏览器警告或预装证书。
+  - **token 交换复用**：抽出 OidcExchange 的"换 token → 验 id_token → OidcClaims"为可复用方法（采集面加 ECDH+会话；管理面加 admin 会话·无 ECDH/无 exam-seat 绑定）；dashboard 用独立 aud 的 validator。
+  - **测试**：现有 admin 401/200/cookie/`?t=` 用例改走 mint 长老会话；补 mock OIDC 覆盖"长老进 / 弟子拒 / 过期拒 / state 不符拒"。
+  - **cpplearn 适配（C7）**：加 `horus-dashboard` web client（env `OAUTH_HORUS_DASHBOARD_*` 门控·镜像现有 horus native client）。
+- **S9 看板前端接入身份画像 + 登录改造**：登录入口由"输入令牌"改为跳 `GET /admin/login`（cpplearn 授权）；座位抽屉渲染 `identity{…,userType}`（用户名/道号/境界/战力/头像 + 监考员/考生标注·现为死代码未渲染）。
 
 ---
 
