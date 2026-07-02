@@ -197,16 +197,32 @@ app.Use(async (ctx, next) =>
 //   ③ ?t= 查询(向后兼容;UI 已不再使用,避免令牌进 URL / 日志 / Referer)
 // 关闭学员机"用 config 下发关掉全场检测 / 拉全班证据图 / 抹自己可疑裁决"等路径。未配令牌则放行(仅联调)。
 if (cfg.AdminAuthEnabled)
+{
+    AdminSessionStore adminSessions = app.Services.GetRequiredService<AdminSessionStore>();
     app.Use(async (ctx, next) =>
     {
         PathString p = ctx.Request.Path;
         bool exempt = p.StartsWithSegments("/api/login") || p.StartsWithSegments("/api/logout");
         if (p.StartsWithSegments("/api") && !exempt)
         {
-            string got = ctx.Request.Cookies["horus_admin"] ?? "";
-            if (got.Length == 0) got = ctx.Request.Headers["X-Horus-Admin"].ToString();
-            if (got.Length == 0) got = ctx.Request.Query["t"].ToString();
-            if (!Crypto.FixedTimeEquals(got, cfg.AdminToken!))
+            bool ok;
+            if (cfg.DashboardOidcEnabled)
+            {
+                // M4·RBAC(R3):仅认 cpplearn **长老** OIDC 管理会话(HttpOnly cookie),**无静态令牌后门**。
+                string sid = ctx.Request.Cookies["horus_admin"] ?? "";
+                double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+                AdminSession? s = adminSessions.Get(sid, now);
+                ok = s is not null && s.IsElder;   // 弟子会话不存在(未建),此处双保险
+            }
+            else
+            {
+                // token 模式(默认·M1-M3 原样):静态 adminToken 三选一凭证(cookie / 头 / ?t=)。
+                string got = ctx.Request.Cookies["horus_admin"] ?? "";
+                if (got.Length == 0) got = ctx.Request.Headers["X-Horus-Admin"].ToString();
+                if (got.Length == 0) got = ctx.Request.Query["t"].ToString();
+                ok = Crypto.FixedTimeEquals(got, cfg.AdminToken!);
+            }
+            if (!ok)
             {
                 ctx.Response.StatusCode = 401;
                 await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
@@ -215,6 +231,7 @@ if (cfg.AdminAuthEnabled)
         }
         await next();
     });
+}
 
 // ---- 采集端通道(Agent ↔ Server) ----
 app.MapGet("/ingest/events", (HttpContext ctx, EventIngest h) => h.HandleAsync(ctx));      // WebSocket
@@ -223,6 +240,9 @@ app.MapPost("/ingest/keystroke", (HttpContext ctx, KeystrokeIngest h) => h.Handl
 
 // ---- M4 身份层:OIDC 登录换会话(采集面·由一次性 code+PKCE 保护·不走 admin gate) ----
 app.MapOidc();
+
+// ---- M4·RBAC:监考员看板 OIDC 登录(/admin/login + /cb·非 /api,不受 admin gate) ----
+app.MapAdminOidc();
 
 // ---- 看板 / 管理 API ----
 app.MapApi();
