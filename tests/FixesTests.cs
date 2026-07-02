@@ -268,3 +268,59 @@ public class FixServerApiTests
         Assert.Equal(1, n);   // 裁剪:只留最新 ts 一行
     }
 }
+
+// ===== 2026-07-02 第三轮审查修复的回归锁定 =====
+
+/// F5:URL 黑名单改按 DNS 标签匹配,杜绝子串误伤(richardbard≠bard·foryou.com≠you.com·googleusercontent≠google)。
+public class FixHostMatchTests
+{
+    [Theory]
+    // 真命中(应判 AI/搜索):整段标签 / 域后缀
+    [InlineData("chat.openai.com", true)]
+    [InlineData("openai.com", true)]
+    [InlineData("poe.com", true)]
+    [InlineData("you.com", true)]
+    [InlineData("www.you.com", true)]
+    // 假阳性(旧子串匹配会误命中,新标签匹配不命中)
+    [InlineData("richardbard.com", false)]   // 含 "bard" 子串但非整段标签
+    [InlineData("foryou.com", false)]        // 含 "you.com" 子串但非域后缀
+    [InlineData("myclaude-notes.local", false)]
+    [InlineData("openai-mirror.cn", false)]  // 连字符镜像:标签匹配会漏(交白名单+人工兜底,换低假阳性)
+    public void AI站按标签匹配_不再子串误伤(string host, bool expected)
+        => Assert.Equal(expected, Horus.Server.Analysis.RiskModel.HostMatchesAny(host, Horus.Server.Analysis.RiskModel.AiHosts));
+
+    [Theory]
+    [InlineData("www.google.com", true)]
+    [InlineData("google.com", true)]
+    [InlineData("googleusercontent.com", false)]   // 含 "google" 子串但 "googleusercontent" 非整段 → 不误判搜索
+    [InlineData("baidu.com", true)]
+    public void 搜索站按标签匹配(string host, bool expected)
+        => Assert.Equal(expected, Horus.Server.Analysis.RiskModel.HostMatchesAny(host, Horus.Server.Analysis.RiskModel.SearchHosts));
+
+    [Fact]   // F11:空 host(about:blank/data:/解析失败)在配了白名单时不再被误判高危(返回 0)。
+    public void 空host不误判高危()
+    {
+        using JsonDocument p = JsonDocument.Parse("{\"url\":\"about:blank\"}");
+        var wl = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "judge.exam.cn" };
+        int risk = Horus.Server.Analysis.RiskModel.Derive(SignalType.BrowserUrl, p.RootElement, wl, null);
+        Assert.Equal(0, risk);
+    }
+
+    [Fact]   // F5 端到端:chat.openai.com 仍判 80(未因收严匹配漏掉真命中)。
+    public void 真AI站仍判高危()
+    {
+        using JsonDocument p = JsonDocument.Parse("{\"url\":\"https://chat.openai.com/c/abc\"}");
+        int risk = Horus.Server.Analysis.RiskModel.Derive(SignalType.BrowserUrl, p.RootElement, null, null);
+        Assert.Equal(80, risk);
+    }
+}
+
+/// F9:confidence 整数 1(=1%)不再被 0-1 概率启发式误放大成 100;严格 (0,1) 才放大。
+public class FixConfidenceBoundaryTests
+{
+    private static int Conf(string json) => OpenAiCompatibleVisionAnalyzer.Parse(json)!.Confidence;
+
+    [Fact] public void 整数1保持1_不放大()   => Assert.Equal(1, Conf("{\"suspicious\":true,\"confidence\":1}"));
+    [Fact] public void 小数09仍放大到90()     => Assert.Equal(90, Conf("{\"suspicious\":true,\"confidence\":0.9}"));
+    [Fact] public void 整数95不变()           => Assert.Equal(95, Conf("{\"suspicious\":true,\"confidence\":95}"));
+}

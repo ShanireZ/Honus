@@ -23,8 +23,9 @@ public static class Suspicion
                 if (TryStr(payload, "url", out string? url) && !string.IsNullOrEmpty(url))
                 {
                     string host = HostOf(url);
-                    if (MatchAny(host, AiHosts)) return "web_ai";
-                    if (MatchAny(host, SearchHosts)) return "search";
+                    // 与 RiskModel 共用按 DNS 标签的匹配(避免 richardbard→bard 等子串误标),判据与标签不漂移。
+                    if (RiskModel.HostMatchesAny(host, AiHosts)) return "web_ai";
+                    if (RiskModel.HostMatchesAny(host, SearchHosts)) return "search";
                 }
                 return "non_whitelist_web";   // 非 AI/非搜索的非白名单站:中性标签,别误贴 web_ai
             case SignalType.ProcessStart: return "non_whitelist_proc";
@@ -36,15 +37,9 @@ public static class Suspicion
 
     private static string HostOf(string url)
     {
+        // 解析失败返回空串(与 RiskModel.HostOf 一致):不拿整条 URL 去撞黑名单标签,免 path/query 假阳性(F5)。
         try { return new Uri(url).Host.ToLowerInvariant(); }
-        catch { return url.ToLowerInvariant(); }
-    }
-
-    private static bool MatchAny(string host, string[] needles)
-    {
-        foreach (string n in needles)
-            if (host.Contains(n, StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
+        catch { return ""; }
     }
 
     private static bool TryStr(JsonElement obj, string prop, out string? val)

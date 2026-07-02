@@ -19,6 +19,9 @@ namespace Horus.Server.Analysis.Vision;
 ///     解码失败也直通原字节(不出网,无泄漏面)。
 public static class VisionImagePrep
 {
+    /// 解码像素上限(纵深防解码炸弹):≈ 4096×4096,远超 1080p 采集(1920×1080≈207 万)。超此判失败不全解码。
+    private const long MaxDecodePixels = 4096L * 4096L;
+
     /// 返回派生字节;见类注释关于 `mustStrip` 的两条路径。
     public static byte[]? Prepare(byte[] original, ServerConfig cfg, bool mustStrip = false)
     {
@@ -29,6 +32,13 @@ public static class VisionImagePrep
         try
         {
             using var inMs = new MemoryStream(original);
+            // F10 纵深:2MB 体上限只约束**压缩后**字节;高压缩比图(大面积纯色)可在 <2MB 内编码巨幅位图,
+            // 解码即 4 字节/px 巨额分配(20000×20000≈1.6GB)。先 Identify 只读头探尺寸(不解码像素),超上限直接判失败,
+            // 不进全解码。上限 MaxDecodePixels(≈ 4096×4096,远超 1080p 采集)。
+            ImageInfo info = Image.Identify(inMs);
+            if ((long)info.Width * info.Height > MaxDecodePixels)
+                return mustStrip ? null : original;   // 联网:宁跳过不泄原图;本地/mock:直通(不出网,无泄漏面)
+            inMs.Position = 0;
             using Image<Rgba32> image = Image.Load<Rgba32>(inMs);
 
             // 剥离元数据:派生图只含像素,不随源图 EXIF/XMP/IPTC/ICC 出网(#15)。

@@ -42,8 +42,11 @@ public static class RiskModel
                 if (TryStr(payload, "url", out string? url) && !string.IsNullOrEmpty(url))
                 {
                     string host = HostOf(url!);
-                    if (MatchAny(host, AiHosts)) return 80;                 // 独立判定:AI 站
-                    if (MatchAny(host, SearchHosts)) return 70;             // 独立判定:搜索引擎
+                    // 空 host = 浏览器内部页(about:blank / data: / chrome://)或解析失败 → 不加码(F11:免把内部页误判高危;
+                    // 真实 Agent 的内部页本走 url_unreadable,此为服务器侧纵深)。
+                    if (host.Length == 0) return 0;
+                    if (HostMatchesAny(host, AiHosts)) return 80;           // 独立判定:AI 站
+                    if (HostMatchesAny(host, SearchHosts)) return 70;       // 独立判定:搜索引擎
                     if (whitelistHosts is not null)
                         return HostWhitelisted(host, whitelistHosts) ? 0 : 80;   // 有白名单可判:非白名单站高危
                 }
@@ -132,14 +135,41 @@ public static class RiskModel
 
     private static string HostOf(string url)
     {
+        // 解析失败返回**空串**(不再回退返回整条 URL)—— 否则子串匹配会在 path/query 上跑,
+        // 把 "example.com/search?q=google" 误判搜索页(闭合第三轮 F5 的整串匹配假阳性放大器)。
         try { return new Uri(url).Host.ToLowerInvariant(); }
-        catch { return url.ToLowerInvariant(); }
+        catch { return ""; }
     }
 
-    private static bool MatchAny(string host, string[] needles)
+    /// host 是否命中某黑名单标签集。**按 DNS 标签匹配**以杜绝子串误伤(richardbard≠bard·foryou.com≠you.com):
+    ///   • 含 '.' 的 needle(you.com / so.com / 360.cn)按**域后缀**:host==needle 或 host.EndsWith("."+needle);
+    ///   • 裸品牌词 needle(openai / claude / bard)匹配 host 的**某一整段标签**(chat.openai.com 命中 openai;richardbard.com 不命中)。
+    /// 取舍:连字符品牌镜像(openai-mirror.cn)会漏,交白名单兜底(非白名单本就高危)+ 人工裁决,换取显著更低的假阳性(架构铁律 §3)。
+    /// needles 均为小写;host 已在 HostOf 小写化。RiskModel 与 Suspicion 共用此匹配,避免判据与标签漂移。
+    public static bool HostMatchesAny(string host, string[] needles)
+    {
+        if (string.IsNullOrEmpty(host)) return false;
+        string[] labels = host.Split('.');
+        foreach (string n in needles)
+        {
+            if (n.Contains('.'))
+            {
+                if (host == n || host.EndsWith("." + n, StringComparison.Ordinal)) return true;
+            }
+            else
+            {
+                foreach (string lbl in labels)
+                    if (lbl == n) return true;
+            }
+        }
+        return false;
+    }
+
+    /// 进程名匹配:**保留子串匹配**(与 host 不同)——远控工具改名(teamviewer2 / anydesk_x)应仍命中特征词(architecture §11)。
+    private static bool MatchAny(string name, string[] needles)
     {
         foreach (string n in needles)
-            if (host.Contains(n, StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Contains(n, StringComparison.OrdinalIgnoreCase)) return true;
         return false;
     }
 

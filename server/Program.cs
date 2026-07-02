@@ -139,6 +139,8 @@ app.Use(async (ctx, next) =>
     h["X-Content-Type-Options"] = "nosniff";
     h["X-Frame-Options"] = "DENY";
     h["Referrer-Policy"] = "no-referrer";
+    // no-store 覆盖**所有**响应(不止图片端点):`?t=` 后备令牌若进 URL,任何带令牌的响应都不落磁盘缓存/Referer(闭合第三轮 F8)。
+    h["Cache-Control"] = "no-store";
     await next();
 });
 

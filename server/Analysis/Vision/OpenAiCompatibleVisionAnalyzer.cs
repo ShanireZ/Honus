@@ -137,7 +137,8 @@ public sealed class OpenAiCompatibleVisionAnalyzer : IVisionAnalyzer
         else if (e.ValueKind == JsonValueKind.String &&
                  double.TryParse(e.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double sd)) d = sd;
         else return 0;
-        if (d > 0 && d <= 1) d *= 100;   // 0-1 概率 → 百分比
+        // 仅**严格 (0,1)** 视为 0-1 概率放大;整数 1 保持 1(=1%,几近无把握),不再被误放大成 100(闭合第三轮 F9 边界)。
+        if (d > 0 && d < 1) d *= 100;
         return (int)Math.Clamp(Math.Round(d), 0, 100);
     }
 

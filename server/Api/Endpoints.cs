@@ -211,7 +211,7 @@ public static class Endpoints
                     return Results.Json(new
                     {
                         examId, status, applicable = false,
-                        note = "归档中/已归档:关键事件的 hash_self/sig 锚点在 archive 库,整链已因清理而断,不再做 live 连续性审计(见 §13.2)",
+                        note = "归档中/已归档:关键事件的 hash_self/sig 锚点在 archive 库,整链已因清理而断,不再做 live 连续性审计(见 §13.2)。归档复核走 GET /api/archive/exams/{examId}",
                     });
                 return Results.Json(IntegrityAudit.Run(conn, examId, cfg.Psk));
             }));
@@ -221,6 +221,8 @@ public static class Endpoints
         {
             string? rel = db.Read(conn => Scalar<string?>(conn,
                 "SELECT file_path FROM images WHERE image_id=@id", ("@id", imageId)));
+            // 归档回落(F3):考试到龄归档后 live 行已清、原图移冷存,证据图仍应可通过端点调取取证。
+            rel ??= ArchiveImagePath(archive.ArchivePath, imageId);
             if (rel is null) { ctx.Response.StatusCode = 404; return; }
             string? full = storage.Resolve(rel);
             if (full is null || !File.Exists(full)) { ctx.Response.StatusCode = 404; return; }
@@ -235,10 +237,10 @@ public static class Endpoints
             db.Read(conn =>
             {
                 using SqliteCommand c = conn.Cmd(
-                    @"SELECT image_id,seat_id,ts,trigger,phash,width,height,bytes,is_evidence,uploaded_to_ocr
+                    @"SELECT image_id,seat_id,ts,trigger,phash,width,height,bytes,is_evidence,uploaded_to_ocr,analysis_state
                       FROM images WHERE image_id=@id", ("@id", imageId));
                 using SqliteDataReader r = c.ExecuteReader();
-                if (!r.Read()) return Results.NotFound();
+                if (!r.Read()) return ArchiveImageMeta(archive.ArchivePath, imageId);   // 归档回落(F3)
                 return Results.Json(new
                 {
                     imageId = r.GetString(0),
@@ -250,9 +252,51 @@ public static class Endpoints
                     height = NullInt(r, 6),
                     bytes = NullLong(r, 7),
                     isEvidence = r.GetInt32(8) != 0,
-                    uploadedToOcr = r.GetInt32(9) != 0,
+                    uploadedToOcr = r.GetInt32(9) != 0,   // 隐私审计:字节是否真出网送云(mock/本地恒 false)
+                    analyzed = r.GetInt32(10) != 0,       // 视觉分析是否已终结(成功/确定态失败)
+                    archived = false,
                 });
             }));
+
+        // ---- 归档考试只读复核(F3):到龄归档后 live 已清,关键数据在 archive 库。此端点让归档考试仍可经 HTTP 取证复核。 ----
+        // 返回 { examId, summary, adjudications:[…], events:[…关键事件…], images:[…证据图…] }。archive 库不存在/无此考试 → 404。
+        app.MapGet("/api/archive/exams/{examId}", (string examId) =>
+        {
+            if (!File.Exists(archive.ArchivePath)) return Results.NotFound(new { error = "no_archive" });
+            try
+            {
+                using SqliteConnection conn = OpenArchiveRead(archive.ArchivePath);
+                object? exam = null;
+                using (SqliteCommand c = conn.Cmd("SELECT name,started_at,ended_at,archived_at,summary FROM archive_exams WHERE exam_id=@e", ("@e", examId)))
+                using (SqliteDataReader r = c.ExecuteReader())
+                    if (r.Read()) exam = new { name = NullStr(r, 0), startedAt = NullDouble(r, 1), endedAt = NullDouble(r, 2),
+                                               archivedAt = r.GetDouble(3), summary = ParseNode(NullStr(r, 4)) };
+                if (exam is null) return Results.NotFound(new { error = "no_such_archived_exam" });
+
+                var adj = new List<object>();
+                using (SqliteCommand c = conn.Cmd("SELECT id,seat_id,ts,kind,score,status,refs,reviewer,decided_at,note FROM archive_adjudications WHERE exam_id=@e ORDER BY ts", ("@e", examId)))
+                using (SqliteDataReader r = c.ExecuteReader())
+                    while (r.Read()) adj.Add(new { id = r.GetInt64(0), seatId = r.GetString(1), ts = r.GetDouble(2), kind = r.GetString(3),
+                        score = NullInt(r, 4), status = r.GetString(5), refs = ParseNode(NullStr(r, 6)), reviewer = NullStr(r, 7),
+                        decidedAt = NullDouble(r, 8), note = NullStr(r, 9) });
+
+                var evs = new List<object>();
+                using (SqliteCommand c = conn.Cmd("SELECT id,seat_id,seq,ts,type,payload,risk,server_risk,evidence_image_id FROM archive_events WHERE exam_id=@e ORDER BY ts LIMIT 2000", ("@e", examId)))
+                using (SqliteDataReader r = c.ExecuteReader())
+                    while (r.Read()) evs.Add(new { id = r.GetInt64(0), seatId = r.GetString(1), seq = NullLong(r, 2), ts = r.GetDouble(3),
+                        type = r.GetString(4), payload = ParseNode(NullStr(r, 5)), risk = NullInt(r, 6), serverRisk = NullInt(r, 7),
+                        evidenceImageId = NullStr(r, 8) });
+
+                var imgs = new List<object>();
+                using (SqliteCommand c = conn.Cmd("SELECT image_id,seat_id,ts,trigger,phash,bytes FROM archive_images WHERE exam_id=@e ORDER BY ts LIMIT 2000", ("@e", examId)))
+                using (SqliteDataReader r = c.ExecuteReader())
+                    while (r.Read()) imgs.Add(new { imageId = r.GetString(0), seatId = r.GetString(1), ts = r.GetDouble(2),
+                        trigger = NullStr(r, 3), phash = NullStr(r, 4), bytes = NullLong(r, 5) });
+
+                return Results.Json(new { examId, archived = true, exam, adjudications = adj, events = evs, images = imgs });
+            }
+            catch (SqliteException) { return Results.NotFound(new { error = "no_archive" }); }
+        });
 
         // ================= 管理 / 复核 (写) =================
 
@@ -323,12 +367,27 @@ public static class Endpoints
         // 下发配置热更新:存最新配置并推送给该考试所有在线 Agent(新连/重连 Agent 在 hello 时也会收到)
         app.MapPost("/api/exams/{examId}/config", async (string examId, HttpContext ctx) =>
         {
+            if (!IsSafeId(examId)) return Results.BadRequest(new { error = "bad_examId" });   // 与建考试端点一致(纵深:防污染配置表/内存字典键)
             JsonNode? body;
             try { body = await JsonNode.ParseAsync(ctx.Request.Body); }
             catch (JsonException) { return Results.BadRequest(new { error = "bad_json" }); }
             if (body is not JsonObject) return Results.BadRequest(new { error = "config 必须是对象" });
             int pushedTo = await hub.PushConfigAsync(examId, body.ToJsonString(), ctx.RequestAborted);
             return Results.Json(new { ok = true, examId, pushedTo });
+        });
+
+        // 监考员点名抓图(D2):向指定在线 Agent 推 capture_now,Agent 立即抓一张(dedup 关闭)。agent 不在线 → pushed:false。
+        app.MapPost("/api/agents/{agentId}/capture", async (string agentId, HttpContext ctx) =>
+        {
+            string reason = "capture_now";
+            try
+            {
+                JsonNode? body = await JsonNode.ParseAsync(ctx.Request.Body);
+                if ((string?)body?["reason"] is string rs && rs.Length > 0) reason = rs;
+            }
+            catch (JsonException) { /* 无 body / 非 JSON:用默认 reason */ }
+            bool pushed = await hub.PushCaptureNowAsync(agentId, reason, ctx.RequestAborted);
+            return Results.Json(new { ok = true, agentId, pushed });
         });
 
         // 归档作业手动触发(运维):立即扫描到龄考试并归档 + 清理。后台每 6h 也自动跑。返回本次报告。
@@ -393,6 +452,51 @@ public static class Endpoints
         foreach (char c in id)
             if (c < 0x20 || c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|') return false;
         return true;
+    }
+
+    // ---- 归档库只读小工具(F3:归档后证据/元数据仍可经 HTTP 取证) ----
+    private static SqliteConnection OpenArchiveRead(string archiveDbPath)
+    {
+        var conn = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = archiveDbPath, Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+        }.ToString());
+        conn.Open();
+        return conn;
+    }
+
+    /// 归档库里该图的冷存相对路径(archive/<exam>/<seat>/<id>.webp);无归档库/无此图 → null。
+    private static string? ArchiveImagePath(string archiveDbPath, string imageId)
+    {
+        if (!File.Exists(archiveDbPath)) return null;
+        try
+        {
+            using SqliteConnection conn = OpenArchiveRead(archiveDbPath);
+            using SqliteCommand c = conn.Cmd("SELECT file_path FROM archive_images WHERE image_id=@id", ("@id", imageId));
+            return c.ExecuteScalar() as string;
+        }
+        catch (SqliteException) { return null; }
+    }
+
+    /// 归档库里该图的元数据(带 archived:true)+ 视觉结果;无则 404。
+    private static IResult ArchiveImageMeta(string archiveDbPath, string imageId)
+    {
+        if (!File.Exists(archiveDbPath)) return Results.NotFound();
+        try
+        {
+            using SqliteConnection conn = OpenArchiveRead(archiveDbPath);
+            using SqliteCommand c = conn.Cmd(
+                "SELECT image_id,seat_id,ts,trigger,phash,width,height,bytes FROM archive_images WHERE image_id=@id", ("@id", imageId));
+            using SqliteDataReader r = c.ExecuteReader();
+            if (!r.Read()) return Results.NotFound();
+            return Results.Json(new
+            {
+                imageId = r.GetString(0), seatId = r.GetString(1), ts = r.GetDouble(2),
+                trigger = NullStr(r, 3), phash = NullStr(r, 4), width = NullInt(r, 5), height = NullInt(r, 6),
+                bytes = NullLong(r, 7), archived = true,
+            });
+        }
+        catch (SqliteException) { return Results.NotFound(); }
     }
 
     // ---- 读取小工具 ----

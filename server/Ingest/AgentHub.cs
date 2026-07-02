@@ -67,6 +67,16 @@ public sealed class AgentHub
     public static string BuildConfigFrame(string configJson)
         => JsonSerializer.Serialize(new { v = 1, type = "config_update", config = JsonNode.Parse(configJson) });
 
+    /// 向指定在线 Agent 推送 capture_now(监考员手动点名抓图)。返回是否成功送达(agent 不在线 / 发送失败 → false)。
+    /// 闭合第三轮 D2:api-contract 曾承诺 capture_now 帧但服务器从无发送方,Agent 侧 handler 是死代码;此端点使其成真。
+    public async Task<bool> PushCaptureNowAsync(string agentId, string reason, CancellationToken ct)
+    {
+        if (!_conns.TryGetValue(agentId, out Conn? c)) return false;
+        string frame = JsonSerializer.Serialize(new { v = 1, type = "capture_now", reason });
+        try { await c.SendAsync(frame, ct); return true; }
+        catch { return false; }
+    }
+
     public void Unregister(string agentId, Conn c)
     {
         // 仅当仍是同一连接才移除,避免误删更晚的重连

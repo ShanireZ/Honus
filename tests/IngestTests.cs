@@ -554,9 +554,10 @@ public class IngestTests
         Assert.Equal(95, susp[0].GetProperty("score").GetInt32());
         Assert.Contains("vision:", susp[0].GetProperty("note").GetString());
 
-        // 图元数据:已送分析 + 标为证据
+        // 图元数据:已分析(终结)+ 标为证据。mock 不出网 → uploadedToOcr 恒 false(隐私审计真出网信号,不再撒谎)。
         JsonElement meta = await http.GetFromJsonAsync<JsonElement>($"/api/images/{cid}/meta");
-        Assert.True(meta.GetProperty("uploadedToOcr").GetBoolean());
+        Assert.True(meta.GetProperty("analyzed").GetBoolean());
+        Assert.False(meta.GetProperty("uploadedToOcr").GetBoolean());
         Assert.True(meta.GetProperty("isEvidence").GetBoolean());
     }
 
@@ -572,14 +573,52 @@ public class IngestTests
         await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 5, "event:browser",
             "aabbccddeeff0011", "1750000000.100", expectDuplicate: false, clientId: cid);
 
-        // 等分析跑完(uploaded_to_ocr=1),再确认无可疑(良性图不制造假阳性)
+        // 等分析跑完(analyzed=true),再确认无可疑(良性图不制造假阳性)
         await WaitForAsync(async () =>
         {
             JsonElement m = await http.GetFromJsonAsync<JsonElement>($"/api/images/{cid}/meta");
-            return m.GetProperty("uploadedToOcr").GetBoolean();
+            return m.GetProperty("analyzed").GetBoolean();
         });
         JsonElement susp = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
         Assert.Equal(0, susp.GetArrayLength());
+    }
+
+    [Fact]   // F5(第三轮):事件+证据图链路,视觉命中不再另插重复 pending,而是并入 ingest 期那条(避免同一事两条、裁决两次)。
+    public async Task 视觉命中并入既有pending_不重复入队()
+    {
+        using var app = new TestApp(visionMock: true);
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http);
+
+        string cid = "img_" + Guid.NewGuid().ToString("N");
+        // 1) 先发一条访问 AI 站的 browser_url 事件,携 evidenceImageId=cid → ingest 期入队一条(effRisk 80)。
+        using (WebSocket ws = await app.ConnectEventsAsync("E1", "A07", "ag-A07"))
+        {
+            string ev = Ws.SignedEvent("E1", "A07", "ag-A07", "PC-A07", SignalType.BrowserUrl,
+                new() { ["url"] = "https://chat.openai.com/", ["whitelisted"] = false }, 80, 1,
+                evidenceImageId: cid);
+            await Ws.SendAsync(ws, ev);
+            await Ws.ReceiveAsync(ws);   // ack
+        }
+        await WaitForAsync(async () =>
+        {
+            JsonElement s = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+            return s.GetArrayLength() == 1;
+        });
+
+        // 2) 上传该证据图(含 AICHAT 标记 → mock 判 web_ai)→ 触发视觉分析。
+        byte[] webp = Encoding.ASCII.GetBytes("RIFF....WEBP AICHAT on screen");
+        await UploadImageAsync(http, webp, "E1", "A07", "ag-A07", 5, "event:browser",
+            "aabbccddeeff0011", "1750000000.100", expectDuplicate: false, clientId: cid);
+
+        // 3) 等视觉证据并入(note 出现 vision:),断言**仍只有一条** pending(去重生效)。
+        await WaitForAsync(async () =>
+        {
+            JsonElement s = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+            return s.GetArrayLength() == 1 && (s[0].GetProperty("note").GetString() ?? "").Contains("vision:");
+        });
+        JsonElement susp = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
+        Assert.Equal(1, susp.GetArrayLength());   // 未翻倍
     }
 
     private static async Task WaitForAsync(Func<Task<bool>> cond, int timeoutMs = 8000)
