@@ -29,6 +29,9 @@ public sealed record ServerConfig
     /// 允许在非 loopback 绑定下缺 PSK / 管理令牌启动(裸奔)。默认 false = fail-closed。仅联调开。
     public bool AllowInsecure { get; init; }
 
+    /// 启动成功后自动在默认浏览器打开管理端看板(仅 Windows 交互式运行的真 exe;测试宿主/输出重定向/服务化不弹)。
+    public bool OpenDashboard { get; init; } = true;
+
     // ---- M4 身份层:cpplearn OIDC 取代共享 PSK(见 docs/m4-identity-oidc.md)----
     /// 采集面鉴权模式:"psk"(默认·共享 PSK·M1-M3 原样) | "oidc"(仅 OIDC 会话) | "both"(共存·迁移期回退网)。
     public string AuthMode { get; init; } = "psk";

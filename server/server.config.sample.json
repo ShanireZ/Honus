@@ -18,6 +18,8 @@
   "adminToken": "",
   // 非 loopback 绑定时,缺采集鉴权(PSK 或 OIDC)或 adminToken 会拒绝启动(fail-closed)。仅本机联调可设 true 放行。
   "allowInsecure": false,
+  // 启动成功自动在默认浏览器打开管理端看板(仅交互式运行的真 exe;服务化/脚本运行不弹)。
+  "openDashboard": true,
   // ---- M4 身份层:cpplearn OIDC 取代共享 PSK(见 docs/m4-identity-oidc.md)----
   // authMode: "psk"(默认·共享 PSK) | "oidc"(仅 OIDC 会话) | "both"(迁移共存·可回退 PSK)。
   "authMode": "psk",

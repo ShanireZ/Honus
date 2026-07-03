@@ -8,6 +8,25 @@ using Horus.Server.Identity;
 using Horus.Server.Ingest;
 using Horus.Server.Jobs;
 
+// ---- 双击运维 UX:未处理异常(fail-closed / 配置错等)给友好中文提示并暂停,仅**真 exe**(非测试宿主)生效 ----
+// 否则双击运行时窗口"黑框一闪"即逝,拒绝启动的原因根本看不见(真机验收实际踩过)。
+bool isRealHost = string.Equals(System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name,
+    "Horus.Server", StringComparison.OrdinalIgnoreCase);
+if (isRealHost)
+{
+    AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("[Horus] 启动失败:" + ((e.ExceptionObject as Exception)?.Message ?? e.ExceptionObject?.ToString()));
+        if (Environment.UserInteractive && !Console.IsInputRedirected)
+        {
+            Console.Error.WriteLine("按回车键退出…");
+            Console.ReadLine();
+        }
+        Environment.Exit(1);   // 已给出友好信息,不再让运行时二次打印堆栈
+    };
+}
+
 // ---- 密钥加密工具:`Horus.Server protect-secret <明文key>` 打印 DPAPI 密文,粘进 config 的 visionApiKeyEnc(不存明文) ----
 if (args.Length >= 1 && args[0] == "protect-secret")
 {
@@ -340,6 +359,24 @@ app.MapFallbackToFile("index.html");
 
 app.Logger.LogInformation("Horus 监考服务器启动 db={Db} dataDir={Dir} 采集鉴权={Auth} 管理鉴权={Admin} 阈值={Th}",
     dataSource, dataDir, cfg.AuthEnabled ? "开" : "关(仅联调)", cfg.AdminAuthEnabled ? "开" : "关(仅联调)", cfg.RiskThreshold);
+
+// ---- 启动成功自动打开管理端看板(双击运维 UX·openDashboard 可关)。仅 Windows 交互式真 exe;测试宿主/输出重定向/服务化不弹 ----
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    if (!cfg.OpenDashboard || !isRealHost || !OperatingSystem.IsWindows() || !Environment.UserInteractive) return;
+    if (Console.IsOutputRedirected) return;   // 脚本/无人值守运行不弹
+    try
+    {
+        string? url = app.Urls
+            .Select(u => u.Replace("0.0.0.0", "127.0.0.1").Replace("[::]", "127.0.0.1").Replace("//+", "//127.0.0.1").Replace("//*", "//127.0.0.1"))
+            .OrderBy(u => u.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? 1 : 0)   // http 优先:自签 https 首开有浏览器告警
+            .FirstOrDefault();
+        if (string.IsNullOrEmpty(url)) return;
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        app.Logger.LogInformation("已自动打开管理端看板 {Url}(配置 openDashboard=false 可关闭)", url);
+    }
+    catch { /* 打不开浏览器不影响服务 */ }
+});
 
 app.Run();
 
