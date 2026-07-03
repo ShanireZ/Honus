@@ -39,6 +39,8 @@
     <PackageReference Include="System.Management" Version="8.0.0" />
     <!-- 屏幕抓取(Windows-only) -->
     <PackageReference Include="System.Drawing.Common" Version="8.0.7" />
+    <!-- M5 保活层1:作为 Windows 服务(LocalSystem)运行看门狗;UseWindowsService 提供 SCM 集成 -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
   </ItemGroup>
 
   <!-- UIAutomationClient / UIAutomationTypes 由 UseWPF 的 WindowsDesktop 引用包自动带入,

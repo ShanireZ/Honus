@@ -1,6 +1,7 @@
 using Horus.Agent.Buffer;
 using Horus.Agent.Capture;
 using Horus.Agent.Config;
+using Horus.Agent.Hardening;
 using Horus.Agent.Identity;
 using Horus.Agent.Integrity;
 using Horus.Agent.Model;
@@ -15,6 +16,36 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        string selfExe = Environment.ProcessPath ?? "";
+
+        // ---- M5 保活模式分发(采集模式 = 无这些首参)----
+        if (args.Length > 0)
+        {
+            switch (args[0])
+            {
+                case "install-service":
+                    if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("[horus-agent] 服务仅 Windows"); return 1; }
+                    return Hardening.WindowsService.Install(selfExe, args.Skip(1).ToArray());
+                case "uninstall-service":
+                    if (!OperatingSystem.IsWindows()) return 1;
+                    return Hardening.WindowsService.Uninstall();
+                case "--service":
+                    if (!OperatingSystem.IsWindows()) return 1;
+                    Hardening.WindowsService.Run(selfExe, args.Skip(1).ToArray(), ExamSeatKey(args.Skip(1).ToArray()));
+                    return 0;
+                case "--watchdog":
+                {
+                    var rest = args.Skip(1).ToList();
+                    int adopt = -1, ai = rest.IndexOf("--adopt");
+                    if (ai >= 0 && ai + 1 < rest.Count && int.TryParse(rest[ai + 1], out int ap)) { adopt = ap; rest.RemoveRange(ai, 2); }
+                    string[] wArgs = rest.ToArray();
+                    using var wct = new CancellationTokenSource();
+                    Console.CancelKeyPress += (_, e) => { e.Cancel = true; wct.Cancel(); };
+                    return Hardening.Watchdog.RunSupervisor(selfExe, wArgs, adopt, ExamSeatKey(wArgs), serviceSession: false, wct.Token);
+                }
+            }
+        }
+
         string cfgPath = args.Length > 0 ? args[0] : "agent.config.json";
         AgentConfig cfg;
         try { cfg = AgentConfig.Load(cfgPath); }
@@ -109,22 +140,66 @@ internal static class Program
 
         // 连接管理(握手/hello/续传/断线重连)在后台常驻,直到 cts 取消
         Task uplinkTask = Task.Run(() => uplink.RunAsync(cts.Token));
+        var failedSources = new List<string>();
         foreach (ISignalSource s in sources)
         {
             try { s.Start(); }
-            catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] 启动 {s.Name} 失败: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[horus-agent] 启动 {s.Name} 失败: {ex.Message}");
+                failedSources.Add(s.Name);
+            }
         }
+
+        // ---- M5 采集端硬化:健康信号自检上报(纯检测:让规避暴露,不阻断)----
+        // ① 遮蔽检测:每帧 luma 统计 → 分类 → 进入遮蔽态时上报一次(退出后可再报)。
+        ObscureReason lastObscure = ObscureReason.None;
+        capturer.OnStats = stats =>
+        {
+            ObscureReason r = ScreenQuality.Classify(stats);
+            if (r == ObscureReason.None) { lastObscure = ObscureReason.None; return; }
+            if (r == lastObscure) return;   // 同一遮蔽态不重复刷
+            lastObscure = r;
+            Handle(new RawSignal(SignalType.ScreenshotObscured, new()
+            {
+                ["reason"] = ScreenQuality.ReasonLabel(r),
+                ["variance"] = stats.LumaVariance, ["width"] = stats.Width, ["height"] = stats.Height,
+            }, Risk: 60));
+        };
+        // ② 异常重启取证:启动读旧标记,若上次未正常退出 → 上报 watchdog_restart。
+        string markerPath = Path.Combine(AppContext.BaseDirectory, "horus-agent.marker");
+        if (RestartClassifier.IsUnexpectedRestart(RestartMarker.ReadThenMarkRunning(markerPath)))
+            Handle(new RawSignal(SignalType.WatchdogRestart, new() { ["reason"] = "unexpected_prev_exit" }, Risk: 55));
+        // ③ 能力降级:非管理员 / 信号源启动失败 → 上报 capability_degraded。
+        if (!WinPrivilege.IsAdministrator())
+            Handle(new RawSignal(SignalType.CapabilityDegraded,
+                new() { ["capability"] = "admin", ["status"] = "not_elevated", ["detail"] = "采集需管理员权限跑 ETW/UIA/WMI" }, Risk: 55));
+        foreach (string name in failedSources)
+            Handle(new RawSignal(SignalType.CapabilityDegraded,
+                new() { ["capability"] = name, ["status"] = "start_failed" }, Risk: 55));
 
         _ = Task.Run(() => BaselineLoop(live, capturer, cts.Token));
         _ = Task.Run(() => HeartbeatLoop(Handle, cts.Token));
+        _ = Task.Run(() => HealthLoop(Handle, cts.Token));   // ④ 挂起检测
+        // ⑤ 层2 互拉:若由看门狗拉起(HORUS_WATCHDOG_PID),守护看门狗——它被杀则重拉一个 adopt 本进程的新看门狗。
+        if (int.TryParse(Environment.GetEnvironmentVariable("HORUS_WATCHDOG_PID"), out int wdPid) && wdPid > 0)
+            _ = Task.Run(() => Watchdog.GuardWatchdogAsync(wdPid, selfExe, new[] { cfgPath }, cfg.ExamId + "_" + cfg.SeatId, cts.Token));
 
         Console.WriteLine($"[horus-agent] 运行中 seat={cfg.SeatId} exam={cfg.ExamId}。Ctrl+C 退出。");
         cts.Token.WaitHandle.WaitOne();
 
+        RestartMarker.MarkClean(markerPath);   // M5:正常退出写 clean → 下次启动不误判异常重启
         foreach (ISignalSource s in sources) { try { s.Stop(); s.Dispose(); } catch { /* ignore */ } }
         try { uplinkTask.Wait(TimeSpan.FromSeconds(3)); } catch { /* 等连接循环退出再释放,避免 dispose 竞态 */ }
         uplink.DisposeAsync().AsTask().GetAwaiter().GetResult();
         return 0;
+    }
+
+    /// 看门狗单例键 / adopt 用:从 config 取 exam_seat(加载失败回退 default)。
+    private static string ExamSeatKey(string[] args)
+    {
+        try { AgentConfig c = AgentConfig.Load(args.Length > 0 ? args[0] : "agent.config.json"); return c.ExamId + "_" + c.SeatId; }
+        catch { return "default"; }
     }
 
     /// 随机基线抓图(30–90s,不去重——每张都可能是抓 IDE 插件的孤证)。区间可热更新。
@@ -150,6 +225,23 @@ internal static class Program
         while (!ct.IsCancellationRequested)
         {
             emit(new RawSignal(SignalType.Heartbeat, new() { ["status"] = "alive" }));
+            try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
+            catch (TaskCanceledException) { break; }
+        }
+    }
+
+    /// M5 防挂起:每 30s 观测 wall-clock;相邻跳变超阈值(期望 30s × 3)→ 上报 suspected_suspend
+    /// (进程被 suspend / 系统睡眠 / 锁屏时 Task.Delay 与进程一同挂起,恢复后 gap = 间隔 + 挂起时长)。
+    private static async Task HealthLoop(Action<RawSignal> emit, CancellationToken ct)
+    {
+        var suspend = new SuspendMonitor(expectedIntervalSec: 30, toleranceFactor: 3.0);
+        while (!ct.IsCancellationRequested)
+        {
+            double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+            double? gapMs = suspend.Observe(now);
+            if (gapMs is not null)
+                emit(new RawSignal(SignalType.SuspectedSuspend,
+                    new() { ["gapMs"] = gapMs.Value, ["expectedMs"] = 30000.0 }));
             try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
             catch (TaskCanceledException) { break; }
         }

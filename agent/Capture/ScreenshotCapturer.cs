@@ -1,7 +1,10 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using Horus.Agent.Config;
+using Horus.Agent.Hardening;
+using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Webp;
+using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using IsImage = SixLabors.ImageSharp.Image;
 
@@ -18,6 +21,9 @@ public sealed class ScreenshotCapturer : IDisposable
     private DateTime _lastUtc = DateTime.MinValue;
     private ulong _lastPhash;
     private bool _hasLast;
+
+    /// M5 防遮蔽:每帧算出廉价 luma 统计喂给此回调(Program 接 ScreenQuality 分类 → 疑似遮蔽则上报)。可空=不检测。
+    public Action<ScreenStats>? OnStats { get; set; }
 
     public ScreenshotCapturer(LiveConfig live, Func<byte[], string, ulong, Task<string?>> upload)
     {
@@ -40,6 +46,9 @@ public sealed class ScreenshotCapturer : IDisposable
             using (IsImage img = ToImageSharp(bmp))
             {
                 Downscale(img, _live.TargetHeight);
+                // M5:每帧算 luma 统计喂遮蔽检测(在去重之前,保证每帧都查)。检测失败不影响主采集。
+                if (OnStats is not null)
+                    try { OnStats(ComputeLumaStats(img)); } catch { /* 遮蔽检测异常吞掉 */ }
                 phash = PerceptualHash.DHash(img);
                 if (dedupAgainstLast && _hasLast && PerceptualHash.Hamming(phash, _lastPhash) <= 3)
                     return null;                                  // 与上一张几乎一致,丢弃
@@ -75,6 +84,27 @@ public sealed class ScreenshotCapturer : IDisposable
         if (img.Height <= targetHeight) return;
         int w = (int)Math.Round(img.Width * (double)targetHeight / img.Height);
         img.Mutate(x => x.Resize(w, targetHeight));
+    }
+
+    /// 廉价 luma 统计:降到 32×32 灰度算方差(近纯色→方差≈0)。W/H 取真实截图尺寸(判坏尺寸/过小)。
+    private static ScreenStats ComputeLumaStats(IsImage img)
+    {
+        int w = img.Width, h = img.Height;
+        using Image<L8> g = img.CloneAs<L8>();
+        g.Mutate(x => x.Resize(32, 32));
+        double sum = 0, sumSq = 0;
+        int n = 0;
+        g.ProcessPixelRows(acc =>
+        {
+            for (int y = 0; y < acc.Height; y++)
+            {
+                Span<L8> row = acc.GetRowSpan(y);
+                for (int i = 0; i < row.Length; i++) { double v = row[i].PackedValue; sum += v; sumSq += v * v; n++; }
+            }
+        });
+        double mean = n > 0 ? sum / n : 0;
+        double variance = n > 0 ? Math.Max(0, sumSq / n - mean * mean) : 0;
+        return new ScreenStats(w, h, variance);
     }
 
     private static byte[] EncodeWebp(IsImage img, int quality)

@@ -1,7 +1,7 @@
 # M5 采集端硬化 —— 保活 / 防挂起 / 防遮蔽 / 防降权限（设计与任务）
 
 - 项目：**Horus** · 里程碑：**M5 采集端硬化（Agent 可靠性 / 抗规避）**
-- 日期：2026-07-03 · 状态：**设计定案（owner 拍板），实现中**
+- 日期：2026-07-03 · 状态：**已实现（176 测试全绿·0 警告；Windows 专属部分待 owner 真机验收）**
 - 关联：[architecture-v0.2.md](architecture-v0.2.md)（§10 威胁模型 / 铁律1 预防层为零）· [api-contract-m1.md](api-contract-m1.md)
 
 ## 0. 哲学定位（关键）
@@ -50,3 +50,19 @@
 - **第二显示器 / 虚拟桌面**仍是结构盲区（架构 §11）——遮蔽检测只抓"主屏纯色覆盖"一类,其余靠物理监考。
 - **看门狗本身可被管理员权限停**（学员标准账户停不掉 LocalSystem 服务;但真管理员账户能）——停服务 / 关采集都靠**心跳断 → 看板告警**兜底,保活只缩短规避窗口,不做内核保护。
 - 不阻断作弊——M5 强化的是"采集不被静默削弱",不改 Horus 纯检测取证本质。
+
+## 6. 实现落地（2026-07-03·176 测试全绿）
+
+**✅ 已实现 + 单测（本机绿）**
+- Contracts:`Wire.cs` +4 `SignalType`(`watchdog_restart`/`suspected_suspend`/`screenshot_obscured`/`capability_degraded`)。
+- agentcore `Hardening/`:`ScreenQuality`(遮蔽分类)、`SuspendMonitor`(挂起)、`CapabilityTracker`(能力降级去抖)、`RestartClassifier`(异常重启)——4 纯逻辑核 + **16 单测**(`HardeningTests.cs`)。★坑:阈值 `record struct` 的 `new()` 零值绕过默认参数 → 改**引用类型 record**。
+- server:`RiskModel.Derive` 给遮蔽 60 / 能力降级 55 / 异常重启 55(独立赋分·不信 Agent 自报)、`EventIngest.ParseType` + `Suspicion.KindFor` 认新类型、`/api/exams/{id}/seats` 加 `healthAlerts` 聚合 —— **2 服务端测**(遮屏 risk0 仍入队 / 座位健康计数)。
+- 看板:座位卡健康告警标(⚠N·内联样式)+ 抽屉健康行 + tooltip。
+
+**✅ 已实现 · 编译通过 · 待真机验收(Windows 专属)**
+- agent 检测接线(`Program.cs` + `Capture/ScreenshotCapturer.cs` 每帧 luma 统计喂分类器 + `Hardening/AgentHardening.cs` 管理员自检/重启标记):遮蔽/挂起/能力降级/异常重启四类信号自检上报,复用 agentcore 已测核。
+- **保活层2** `Hardening/Watchdog.cs`:`--watchdog` supervisor(启动+监控采集子进程·异常退出退避重启·命名 Mutex 单例·`--adopt` 守现有进程)+ 采集端 `GuardWatchdogAsync`(看门狗被杀→重拉 adopt 互拉)。
+- **保活层1** `Hardening/WindowsService.cs`(`install-service`/`uninstall-service` 走 sc.exe·`--service` 用 `UseWindowsService` 托管 supervisor·LocalSystem) + `Hardening/SessionLauncher.cs`(`CreateProcessAsUser` 把采集拉进用户交互会话·session 0 截不到屏的必需项·失败回退普通启动)。
+- **层3** 心跳告警:M1 已有,看板离线即暴露。
+
+**真机验收清单(owner)**:① 服务 install/start → 采集在用户会话起、能截屏 ② Task Manager 杀采集 exe → 看门狗秒级重拉 ③ 杀看门狗 → 采集端重拉 adopt 看门狗 ④ 标准账户杀不掉 LocalSystem 服务 ⑤ suspend/睡眠恢复 → 看板 `suspected_suspend` ⑥ 纯色窗盖屏 → `screenshot_obscured` 入队 ⑦ 非管理员起 → `capability_degraded`。

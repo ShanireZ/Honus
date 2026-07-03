@@ -32,7 +32,8 @@
 ## 目录
 - [docs/architecture-v0.2.md](docs/architecture-v0.2.md) — 总体架构（**权威设计**）
 - [docs/api-contract-m1.md](docs/api-contract-m1.md) — M1 接口契约（Agent↔Server 协议 + 数据模型）
-- [docs/m4-identity-oidc.md](docs/m4-identity-oidc.md) — **M4 身份层**：cpplearn OIDC 取代共享 PSK（拓扑 A · 闭合 §10.1 栽赃/seq 抢占 · 设计+任务计划）
+- [docs/m4-identity-oidc.md](docs/m4-identity-oidc.md) — **M4 身份层**：cpplearn OIDC 取代共享 PSK（拓扑 A · 闭合 §10.1 栽赃/seq 抢占 · §10 RBAC 角色映射 + 监考员 OIDC 登录）
+- [docs/m5-agent-hardening.md](docs/m5-agent-hardening.md) — **M5 采集端硬化**：保活/防挂起/防遮蔽/防降权限（纯检测=检测+上报+看板健康告警 + 三层保活看门狗·不做内核对抗）
 - [schema/schema.sql](schema/schema.sql) — SQLite **live** DB DDL
 - [schema/schema-archive.sql](schema/schema-archive.sql) — SQLite **archive** DB DDL
 - [contracts/](contracts/) — 共享线协议库（`Horus.Contracts`）
