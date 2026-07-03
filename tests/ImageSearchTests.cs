@@ -60,7 +60,7 @@ public class MockEmbedderTests
         Assert.NotNull(a);
         Assert.Equal(512, a!.Length);
         Assert.Equal(a, b);                                   // 同字节 → 同向量
-        Assert.True(VecMath.Cosine(a, b) > 0.999);
+        Assert.True(VecMath.Cosine(a, b!) > 0.999);
     }
 
     [Fact]

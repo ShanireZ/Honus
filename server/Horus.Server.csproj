@@ -27,6 +27,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 配置文件**不随发布拷贝**:真 server.config.json 含密钥(勿进成品包·防泄漏);模板/参考由部署时手放。
+         Web SDK 默认把 *.json 当 Content 拷进 publish 输出,此处显式关掉。 -->
+    <Content Update="server.config.json;server.config.sample.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 权威 DDL 内嵌进程序集(路径无关,测试也能读到)。启动时执行,M1 剥离 vec0 虚表。 -->
     <EmbeddedResource Include="..\schema\schema.sql" Link="schema.sql" />
     <!-- 归档库 DDL:M3 归档作业首次运行时应用到 archive 文件(idempotent)。 -->
