@@ -25,7 +25,7 @@ public sealed class TestApp : WebApplicationFactory<Program>
     // M4:一份最小合法 JWKS(内联·让 OIDC 模式启动不去拉 issuer)。ingest 测试直接建会话,不走真验签。
     private const string DummyJwks = "{\"keys\":[{\"kty\":\"RSA\",\"use\":\"sig\",\"alg\":\"RS256\",\"kid\":\"test\",\"n\":\"sXchDaQebHnPiGvyDOAT4saGEUetSyo9MKLOoWFsueri23bOdgWp4Dy1WlUzewbgBHod5pcM9H5UGVn9YMcJDp5c\",\"e\":\"AQAB\"}]}";
 
-    public TestApp(bool adminAuth = false, bool keystrokeAuth = false, bool visionMock = false, string? authMode = null, bool adminOidc = false)
+    public TestApp(bool adminAuth = false, bool keystrokeAuth = false, bool visionMock = false, string? authMode = null, bool adminOidc = false, bool embedMock = false)
     {
         _dataDir = Path.Combine(Path.GetTempPath(), "horus-test-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(_dataDir);
@@ -35,6 +35,7 @@ public sealed class TestApp : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("HORUS_KSK_B64", keystrokeAuth ? KskB64 : null);       // null 清除 → 默认击键鉴权关
         Environment.SetEnvironmentVariable("HORUS_ADMIN_TOKEN", adminAuth ? AdminToken : null);  // null 清除 → 默认管理鉴权关
         Environment.SetEnvironmentVariable("HORUS_VISION_PROVIDER", visionMock ? "mock" : null);  // null 清除 → 默认视觉分析关
+        Environment.SetEnvironmentVariable("HORUS_EMBED_PROVIDER", embedMock ? "mock" : null);    // null 清除 → 默认按图搜图关
         Environment.SetEnvironmentVariable("HORUS_URLS", "http://127.0.0.1:0");                   // loopback → 不触发 fail-closed
         // M4:authMode=oidc/both 时配 OIDC(内联 JWKS 免拉取);null → 默认 psk(既有测试无感)。
         Environment.SetEnvironmentVariable("HORUS_AUTH_MODE", authMode);

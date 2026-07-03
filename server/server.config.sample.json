@@ -80,5 +80,18 @@
   "visionMaxAttempts": 5,
   // §5 送云前派生处理(owner 决策 2026-07-02:不再打码/裁剪,只降采样;供应商=境内云 MiMo·PIPL 无跨境):
   //   visionMaxEdge: 送云图长边像素上限(降采样省 token·顺带剥离 EXIF/XMP/ICC 元数据)。默认 1600;0=不降采样直通。原图永不出网,只送派生图。
-  "visionMaxEdge": 1600
+  "visionMaxEdge": 1600,
+  // ---- M3 CLIP 按图搜图(provider-agnostic 嵌入器·C# 暴力余弦·无需 sqlite-vec·仅嵌证据图)----
+  // embedProvider: 留空/"off"=关(默认) | "mock"(确定性·测试) | "openai"(OpenAI 兼容 /v1/embeddings)。
+  "embedProvider": "",
+  // embedBaseUrl: 留空则复用 visionBaseUrl(KEY一致·同 provider);/embeddings 从此拼。⚠️端点须有图像/多模态 embedding 模型。
+  "embedBaseUrl": "",
+  // embedModel: 嵌入模型名(供应商的图像/多模态 embedding 模型)。provider=openai 必配。
+  "embedModel": "",
+  // embedApiKey: 留空则复用视觉 key(KEY一致);生产可用 embedApiKeyEnc(DPAPI) 或 env HORUS_EMBED_KEY。
+  "embedApiKey": "",
+  // embedDim: 嵌入维度(暴力余弦无所谓·仅记录)。默认 512(CLIP ViT-B/32)。
+  "embedDim": 512,
+  // embedBackstopMinutes: 后台补嵌间隔(分钟)·拾回证据图里尚无 embedding 的。默认 5;≤0=关闭。
+  "embedBackstopMinutes": 5
 }

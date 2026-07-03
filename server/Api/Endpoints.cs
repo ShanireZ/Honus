@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Horus.Contracts;
 using Horus.Server.Analysis;
+using Horus.Server.Analysis.Search;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Identity;
@@ -25,6 +26,8 @@ public static class Endpoints
         AgentHub hub = app.Services.GetRequiredService<AgentHub>();
         ArchiveService archive = app.Services.GetRequiredService<ArchiveService>();
         AdminSessionStore adminSessions = app.Services.GetRequiredService<AdminSessionStore>();   // M4·RBAC 登出销毁
+        ImageSearchStore searchStore = app.Services.GetRequiredService<ImageSearchStore>();
+        ImageEmbedService embedService = app.Services.GetRequiredService<ImageEmbedService>();
 
         // ---- 登录:校验令牌 → 下发 HttpOnly cookie(免受 admin gate;否则拿不到 cookie 就进不来) ----
         // cookie 值 = 管理令牌;JS 读不到(HttpOnly),SameSite=Strict 防 CSRF。gate 用 FixedTimeEquals 比对。
@@ -59,7 +62,35 @@ public static class Endpoints
             loginUrl = "/admin/login",
             // 采集面鉴权模式(psk/oidc/both):看板据此在 both 灰度期高亮仍走 PSK 的座位。
             collectAuthMode = cfg.AuthMode,
+            // 按图搜图是否可用(嵌入器已配)——看板据此显示「按图搜图」按钮。
+            imageSearchEnabled = embedService.Enabled,
         }));
+
+        // ---- 按图搜图(M3·admin 门内):以一张证据图为查询,在本场已嵌入图里暴力余弦捞相似帧 ----
+        app.MapPost("/api/exams/{examId}/search-image", async (string examId, HttpContext ctx) =>
+        {
+            JsonNode? body;
+            try { body = await JsonNode.ParseAsync(ctx.Request.Body); }
+            catch (JsonException) { return Results.Json(new { ok = false, error = "bad_json" }, statusCode: 400); }
+            string queryImageId = (string?)body?["imageId"] ?? "";
+            int topN = (int?)body?["topN"] ?? 20;
+            if (queryImageId.Length == 0) return Results.Json(new { ok = false, error = "missing_image_id" }, statusCode: 400);
+
+            // 查询图向量:已嵌入直接取;否则即时补嵌(嵌入器关则失败)。
+            float[]? q = searchStore.Get(queryImageId) ?? await embedService.EmbedImageAsync(queryImageId, ctx.RequestAborted);
+            if (q is null)
+                return Results.Json(new { ok = false, error = embedService.Enabled ? "query_not_embeddable" : "search_disabled" }, statusCode: 400);
+
+            List<(string id, float[] vec)> corpus = searchStore.GetExam(examId);
+            List<(string id, double score)> top = ImageSearchStore.TopN(q, corpus, topN, excludeId: queryImageId);
+            return Results.Json(new
+            {
+                ok = true,
+                queryImageId,
+                corpusSize = corpus.Count,
+                results = top.Select(t => new { imageId = t.id, score = Math.Round(t.score, 4) }),
+            });
+        });
 
         // ---- 考前连通性 / 配置预检(admin 门内):监考员开考前一键自查,防 fail-closed 当天翻车。----
         // 检查采集/管理端鉴权配置完整性、cpplearn issuer 可达(JWKS 拉取)、视觉 key、active 考试白名单覆盖(§10.1)。

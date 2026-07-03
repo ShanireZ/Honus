@@ -108,6 +108,32 @@ public sealed record ServerConfig
     /// 送云图长边像素上限(降采样·省 token/少送无关像素·顺带剥离元数据)。默认 1600;0=不降采样直通。
     public int VisionMaxEdge { get; init; } = 1600;
 
+    // ---- M3 CLIP 按图搜图(provider-agnostic 嵌入器·C# 暴力余弦·无需 sqlite-vec·仅嵌证据/可疑图)----
+    /// 图像嵌入器:留空/"off"=关(默认) | "mock"(确定性·测试联调) | "openai"(OpenAI 兼容 /v1/embeddings)。
+    public string? EmbedProvider { get; init; }
+    /// 嵌入端点基址;**留空则复用 `VisionBaseUrl`**(KEY一致·同 provider)。/embeddings 从此拼。
+    public string? EmbedBaseUrl { get; init; }
+    /// 嵌入模型名(供应商的图像/多模态 embedding 模型)。provider=openai 必配。
+    public string? EmbedModel { get; init; }
+    /// 嵌入 API key 明文;**留空则复用视觉 key**(KEY一致)。env HORUS_EMBED_KEY 覆盖。
+    public string? EmbedApiKey { get; init; }
+    /// 嵌入 API key DPAPI 密文(同视觉机制)。
+    public string? EmbedApiKeyEnc { get; init; }
+    /// 嵌入维度(暴力余弦无所谓维度·仅记录/校验)。默认 512(CLIP ViT-B/32)。
+    public int EmbedDim { get; init; } = 512;
+    /// 后台嵌入补扫间隔(分钟):拾回证据/可疑图里尚无 embedding 的。默认 5;≤0=关闭。
+    public double EmbedBackstopMinutes { get; init; } = 5;
+
+    [JsonIgnore]
+    public bool EmbedEnabled => !string.IsNullOrWhiteSpace(EmbedProvider)
+                                && !string.Equals(EmbedProvider, "off", StringComparison.OrdinalIgnoreCase);
+    /// 嵌入端点基址(留空复用视觉)。
+    [JsonIgnore]
+    public string? EmbedBaseUrlEffective => string.IsNullOrWhiteSpace(EmbedBaseUrl) ? VisionBaseUrl : EmbedBaseUrl;
+    /// OpenAI 兼容 embeddings 端点(基址去尾斜杠 + /embeddings)。
+    [JsonIgnore]
+    public string? EmbedEmbeddingsEndpoint => string.IsNullOrEmpty(EmbedBaseUrlEffective) ? null : EmbedBaseUrlEffective!.TrimEnd('/') + "/embeddings";
+
     /// 事件风险分 ≥ 此值 → 入可疑队列。默认 50(见 architecture §16)。
     public int RiskThreshold { get; init; } = 50;
 

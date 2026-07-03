@@ -187,7 +187,9 @@
     pollTimer: null,
     inflight: false,          // 防止轮询叠加
     drawerMode: null,         // "seat" | "suspicious"
-    collectAuthMode: null     // 采集面模式(psk/oidc/both):both 灰度期高亮 PSK 座位
+    collectAuthMode: null,    // 采集面模式(psk/oidc/both):both 灰度期高亮 PSK 座位
+    imageSearchEnabled: false,// 按图搜图是否可用(嵌入器已配)
+    lightboxImageId: null     // 当前灯箱图 id(按图搜图用)
   };
 
   var POLL_MS = 5000;
@@ -211,7 +213,7 @@
     hideLoginGate();
     // 取一次采集面模式(both 灰度期看板要高亮 PSK 座位);失败静默(默认不高亮)。
     fetch("/api/authmode", { credentials: "same-origin" }).then(function (r) { return r.json(); })
-      .then(function (j) { if (j && j.collectAuthMode) state.collectAuthMode = j.collectAuthMode; }).catch(function () {});
+      .then(function (j) { if (j) { if (j.collectAuthMode) state.collectAuthMode = j.collectAuthMode; state.imageSearchEnabled = !!j.imageSearchEnabled; } }).catch(function () {});
     loadExams();
   }
 
@@ -357,6 +359,8 @@
     $("#lightbox").addEventListener("click", function (e) {
       if (e.target.id === "lightbox") closeLightbox();
     });
+    var sb = $("#searchSimilarBtn");
+    if (sb) sb.addEventListener("click", searchSimilar);
   }
 
   /* ============================================================
@@ -733,7 +737,8 @@
     // 证据图点击放大 + 加载失败占位(用 addEventListener 而非内联 onerror:CSP script-src 'self' 会屏蔽内联处理器)
     body.querySelectorAll(".evidence").forEach(function (ev) {
       ev.addEventListener("click", function () {
-        openLightbox(imageUrl(ev.getAttribute("data-img")));
+        var id = ev.getAttribute("data-img");
+        openLightbox(imageUrl(id), id);
       });
       var img = ev.querySelector("img");
       if (img) img.addEventListener("error", function () {
@@ -931,7 +936,8 @@
       var thumbEl = item.querySelector(".thumb");
       if (thumbEl) {
         thumbEl.addEventListener("click", function () {
-          openLightbox(imageUrl(thumbEl.getAttribute("data-img")));
+          var tid = thumbEl.getAttribute("data-img");
+          openLightbox(imageUrl(tid), tid);
         });
         // 加载失败隐藏(addEventListener 而非内联 onerror:CSP 会屏蔽内联处理器)
         thumbEl.addEventListener("error", function () { thumbEl.style.display = "none"; });
@@ -943,13 +949,51 @@
   /* ============================================================
      灯箱
      ============================================================ */
-  function openLightbox(src) {
+  function openLightbox(src, imageId) {
     $("#lightboxImg").src = src;
     $("#lightbox").hidden = false;
+    // M3 按图搜图:有 imageId 且嵌入器已配才显示按钮;每次打开清空上次结果。
+    state.lightboxImageId = imageId || null;
+    var btn = $("#searchSimilarBtn"), res = $("#similarResults");
+    if (res) { res.hidden = true; res.innerHTML = ""; }
+    if (btn) btn.hidden = !(state.imageSearchEnabled && state.lightboxImageId);
   }
   function closeLightbox() {
     $("#lightbox").hidden = true;
     $("#lightboxImg").src = "";
+    state.lightboxImageId = null;
+    var res = $("#similarResults"); if (res) { res.hidden = true; res.innerHTML = ""; }
+  }
+
+  // 按图搜图:以当前灯箱图为查询,捞本场相似帧,渲染缩略图条(点击切换查看)。
+  function searchSimilar() {
+    var imageId = state.lightboxImageId, examId = state.currentExamId;
+    if (!imageId || !examId) return;
+    var res = $("#similarResults");
+    res.hidden = false;
+    res.innerHTML = '<span style="color:#9aa0aa;align-self:center">搜索相似帧中…</span>';
+    api("/api/exams/" + encodeURIComponent(examId) + "/search-image", {
+      method: "POST", body: JSON.stringify({ imageId: imageId, topN: 12 })
+    }).then(function (j) {
+      var results = (j && Array.isArray(j.results)) ? j.results : [];
+      if (!results.length) { res.innerHTML = '<span style="color:#9aa0aa;align-self:center">无相似帧（本场已嵌入 ' + ((j && j.corpusSize) || 0) + ' 图）</span>'; return; }
+      res.innerHTML = results.map(function (r) {
+        return '<div style="flex:0 0 auto;text-align:center">' +
+          '<img src="' + esc(imageUrl(r.imageId)) + '" data-img="' + esc(r.imageId) + '" ' +
+          'style="height:76px;border-radius:.3rem;cursor:pointer" alt="相似帧" loading="lazy" />' +
+          '<div style="color:#a6e3a1;font-size:.7rem">' + (r.score != null ? r.score.toFixed(3) : "") + '</div></div>';
+      }).join("");
+      // 点击相似缩略图 → 切到该图继续看/再搜
+      res.querySelectorAll("img[data-img]").forEach(function (im) {
+        im.addEventListener("click", function () {
+          var id = im.getAttribute("data-img");
+          openLightbox(imageUrl(id), id);
+        });
+      });
+    }).catch(function (err) {
+      if (err && err.isAuth) return;
+      res.innerHTML = '<span style="color:#f38ba8;align-self:center">搜索失败：' + esc(err.message || "") + '</span>';
+    });
   }
 
   /* ============================================================

@@ -110,6 +110,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_images USING vec0(
   embedding FLOAT[512]
 );
 
+-- 图像向量普通表(M3 实做·按图搜图)——规模小(单场几千图),C# 暴力余弦 KNN 就够,不依赖 sqlite-vec 原生扩展。
+-- embedding = float32[dim] 小端字节。仅嵌证据/可疑图(省算力)。vec_images 虚表留作日后大规模检索余量。
+CREATE TABLE IF NOT EXISTS image_embeddings (
+  image_id    TEXT PRIMARY KEY,
+  dim         INTEGER NOT NULL,
+  embedding   BLOB NOT NULL,
+  embedded_at REAL NOT NULL
+);
+
 -- 击键节奏(判题网页前端埋点上报) -----------------------------
 CREATE TABLE IF NOT EXISTS keystroke_samples (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -57,6 +57,10 @@ cfg = cfg with
     VisionBaseUrl = Environment.GetEnvironmentVariable("HORUS_VISION_BASEURL") ?? cfg.VisionBaseUrl,
     VisionModel = Environment.GetEnvironmentVariable("HORUS_VISION_MODEL") ?? cfg.VisionModel,
     VisionApiKey = Environment.GetEnvironmentVariable("HORUS_VISION_KEY") ?? cfg.VisionApiKey,
+    // M3 按图搜图 embed env 覆盖
+    EmbedProvider = Environment.GetEnvironmentVariable("HORUS_EMBED_PROVIDER") ?? cfg.EmbedProvider,
+    EmbedBaseUrl = Environment.GetEnvironmentVariable("HORUS_EMBED_BASEURL") ?? cfg.EmbedBaseUrl,
+    EmbedModel = Environment.GetEnvironmentVariable("HORUS_EMBED_MODEL") ?? cfg.EmbedModel,
     // M4 身份层(OIDC)env 覆盖
     AuthMode = Environment.GetEnvironmentVariable("HORUS_AUTH_MODE") ?? cfg.AuthMode,
     OidcIssuer = Environment.GetEnvironmentVariable("HORUS_OIDC_ISSUER") ?? cfg.OidcIssuer,
@@ -134,6 +138,31 @@ if (cfg.VisionEnabled)
 }
 builder.Services.AddSingleton<VisionAnalysisService>();               // 未注册 IVisionAnalyzer 时内部 no-op
 builder.Services.AddHostedService(sp => sp.GetRequiredService<VisionAnalysisService>());
+
+// ---- M3 CLIP 按图搜图:图像嵌入器(provider-agnostic:mock / OpenAI 兼容·复用视觉 baseUrl/key)+ 后台补嵌 ----
+builder.Services.AddSingleton<Horus.Server.Analysis.Search.ImageSearchStore>();   // 检索始终可用(有 embedding 就能搜)
+if (cfg.EmbedEnabled)
+{
+    if (string.Equals(cfg.EmbedProvider, "openai", StringComparison.OrdinalIgnoreCase))
+    {
+        string eEndpoint = cfg.EmbedEmbeddingsEndpoint ?? throw new InvalidOperationException("embedProvider=openai 需配 embedBaseUrl 或 visionBaseUrl");
+        string eModel = cfg.EmbedModel ?? throw new InvalidOperationException("embedProvider=openai 需配 embedModel");
+        // key:env > embedApiKey/Enc > **复用视觉 key(KEY一致)**
+        string eKey = Environment.GetEnvironmentVariable("HORUS_EMBED_KEY") is { Length: > 0 } ek ? ek
+            : !string.IsNullOrEmpty(cfg.EmbedApiKey) ? cfg.EmbedApiKey!
+            : !string.IsNullOrEmpty(cfg.EmbedApiKeyEnc)
+                ? (OperatingSystem.IsWindows() ? SecretProtect.Unprotect(cfg.EmbedApiKeyEnc!) : throw new PlatformNotSupportedException("embedApiKeyEnc 仅 Windows"))
+                : SecretProtect.Resolve(cfg);   // 复用视觉 key
+        builder.Services.AddSingleton<Horus.Server.Analysis.Search.IImageEmbedder>(sp =>
+            new Horus.Server.Analysis.Search.OpenAiImageEmbedder(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(60) }, eEndpoint, eModel, eKey, cfg.EmbedDim, cfg,
+                sp.GetRequiredService<ILogger<Horus.Server.Analysis.Search.OpenAiImageEmbedder>>()));
+    }
+    else
+        builder.Services.AddSingleton<Horus.Server.Analysis.Search.IImageEmbedder>(new Horus.Server.Analysis.Search.MockImageEmbedder(cfg.EmbedDim));
+}
+builder.Services.AddSingleton<Horus.Server.Analysis.Search.ImageEmbedService>();   // 未注册嵌入器时 no-op
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Horus.Server.Analysis.Search.ImageEmbedService>());
 
 // ---- M4 身份层:OIDC 采集会话(取代共享 PSK)。AuthMode=oidc/both 时启用 ----
 builder.Services.AddSingleton<Horus.Server.Identity.SessionStore>();   // both/oidc 下 ingest 会查会话
