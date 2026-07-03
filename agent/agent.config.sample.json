@@ -1,24 +1,32 @@
 {
-  // 身份:每机固定。examId/seatId **不再配置** —— examId 由服务端派发(当前活跃考试),
-  // seatId 由 OIDC 身份派生(cpplearn username)。psk(legacy)模式才需要手工补 examId/seatId。
-  "agentId": "ag-PC01",
-  "machineId": "PC-01",
+  // ★ 本文件**整个可选** —— 所有字段都有内置默认,删掉配置文件也能跑(零配置部署)。
+  //   只在某项默认不适用时,把对应字段留在这里覆盖;其余可全删。
 
+  // 服务器地址:唯一常需按现场核对的字段(内置默认见下)。考场服务器 IP 不是这个就改这两行:
   "serverWsBase": "ws://192.168.1.10:8080",
   "serverHttpBase": "http://192.168.1.10:8080",
 
-  // 采集鉴权:oidc(推荐·启动后待命,开考弹浏览器登录 cpplearn 换会话) | psk(legacy·须另配 psk/examId/seatId)
+  // 本机身份:**留空即自动用主机名**(machineId=主机名·agentId="ag-"+主机名),逐台免配。
+  // 要人工指定座位标签才填(否则删掉这两行)。
+  "agentId": "",
+  "machineId": "",
+
+  // 采集鉴权:默认 oidc(启动待命,开考弹浏览器登录 cpplearn)。以下三项都有默认,一般不用写。
   "authMode": "oidc",
   "oidcIssuer": "https://betaoi.cc",
   "oidcClientId": "horus-client",
 
+  // psk(legacy)模式才需要:authMode 改 "psk" 并补 psk + examId + seatId(oidc 模式留空/删除)。
+  "psk": "",
+  "examId": "",
+  "seatId": "",
+
+  // 截图/初判/白名单:均有内置默认(白名单默认洛谷 + 常见 IDE·且服务器下发会覆盖),一般全删。
   "targetHeight": 1080,
   "webpQuality": 75,
   "baselineMinSeconds": 30,
   "baselineMaxSeconds": 90,
-
   "largePasteThreshold": 200,
-
-  "whitelistHosts": ["judge.exam.lan", "oj.school.lan"],
-  "whitelistProcs": ["code", "devenv", "cl", "g++", "gcc", "mingw32-make", "explorer", "horus.agent"]
+  "whitelistHosts": ["luogu.com.cn", "www.luogu.com.cn"],
+  "whitelistProcs": ["code", "devenv", "cl", "g++", "gcc", "edge", "explorer", "horus.agent", "dev-c++", "redpanda"]
 }
