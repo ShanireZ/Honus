@@ -2,12 +2,14 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Horus.Contracts;
 using Horus.Server.Config;
+using Horus.Server.Data;
 using Microsoft.Extensions.Logging;
 
 namespace Horus.Server.Identity;
 
 /// M4·S3:授权码换 token → 验 id_token → ECDH 派生 K_sess → 建会话。**Server-Broker**:client_secret 只在本服务器,
 /// Agent 从不经手(见 docs/m4-identity-oidc.md §3)。Agent 拿 loopback 收到的 code + PKCE verifier + 自己的 ECDH 公钥来换。
+/// 考试派发:Agent **不自报 exam/seat** —— examId 由服务端指派(当前活跃考试),seatId 由 OIDC 身份派生(username)。
 public sealed class OidcExchange
 {
     private readonly HttpClient _http;
@@ -15,21 +17,26 @@ public sealed class OidcExchange
     private readonly SessionStore _sessions;
     private readonly ServerConfig _cfg;
     private readonly string _clientSecret;
+    private readonly Db _db;
     private readonly ILogger<OidcExchange> _log;
 
-    public OidcExchange(HttpClient http, OidcTokenValidator validator, SessionStore sessions, ServerConfig cfg, string clientSecret, ILogger<OidcExchange> log)
+    public OidcExchange(HttpClient http, OidcTokenValidator validator, SessionStore sessions, ServerConfig cfg, string clientSecret, Db db, ILogger<OidcExchange> log)
     {
-        _http = http; _validator = validator; _sessions = sessions; _cfg = cfg; _clientSecret = clientSecret; _log = log;
+        _http = http; _validator = validator; _sessions = sessions; _cfg = cfg; _clientSecret = clientSecret; _db = db; _log = log;
     }
 
     public sealed record Request(
         string Code, string CodeVerifier, string RedirectUri, string? Nonce, string AgentEcdhPub,
-        string ExamId, string SeatId, string AgentId, string? MachineId);
+        string AgentId, string? MachineId);
 
     public sealed record Result(bool Ok, string? Error, HorusSession? Session, string? ServerEcdhPub);
 
     public async Task<Result> ExchangeAsync(Request req, double now, CancellationToken ct)
     {
+        // 0) 服务端派发考试:无活跃考试即拒(先于 token 交换 —— 不白耗一次性授权码,Agent 可回待命重试)
+        ExamDispatch.ActiveExam? exam = ExamDispatch.ResolveActive(_db);
+        if (exam is null) return new Result(false, "no_active_exam", null, null);
+
         // 1) 授权码 → token(client_secret_post·带 PKCE code_verifier)
         string? idToken;
         try
@@ -76,9 +83,10 @@ public sealed class OidcExchange
         }
         catch (Exception) { return new Result(false, "bad_agent_pubkey", null, null); }
 
-        // 4) 建会话(绑定身份到 exam/seat/agent)
-        HorusSession session = _sessions.Create(req.ExamId, req.SeatId, req.AgentId, req.MachineId, claims, kSess, now, _cfg.OidcSessionMinutes);
-        _log.LogInformation("OIDC 会话建立 seat={Seat} sub={Sub} user={User}", req.SeatId, claims.Sub, claims.Username);
+        // 4) 建会话(绑定身份到 exam/seat/agent)。seat := username(不安全/为空回退 sub)—— 身份即座位,学员无法自报。
+        string seatId = ExamDispatch.SeatFrom(claims);
+        HorusSession session = _sessions.Create(exam.ExamId, seatId, req.AgentId, req.MachineId, claims, kSess, now, _cfg.OidcSessionMinutes);
+        _log.LogInformation("OIDC 会话建立 exam={Exam} seat={Seat} sub={Sub} user={User}", exam.ExamId, seatId, claims.Sub, claims.Username);
         return new Result(true, null, session, serverPub);
     }
 }

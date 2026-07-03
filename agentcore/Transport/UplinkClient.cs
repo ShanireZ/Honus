@@ -33,6 +33,10 @@ public sealed class UplinkClient : IAsyncDisposable
     public Action<string>? OnCaptureNow;
     /// 服务器下发新配置(热更新)。M1 仅回调,由 Program 决定如何应用。
     public Action<JsonElement>? OnConfigUpdate;
+    /// 考试结束广播(end 时在线推送 / 离线重连 hello 补发)。Program 应排空缓冲后停采、登出回待命。
+    public Action? OnExamEnded;
+    /// 全场远程登出广播(会话已在服务器吊销,连接随后被强断)。Program 应立即弃会话回待命(重连必 401)。
+    public Action? OnSessionRevoked;
 
     public UplinkClient(AgentConfig cfg, LocalBuffer buffer,
         IngestCredential? cred = null,
@@ -171,6 +175,12 @@ public sealed class UplinkClient : IAsyncDisposable
                 break;
             case "capture_now":
                 OnCaptureNow?.Invoke(root.TryGetProperty("reason", out JsonElement rs) ? rs.GetString() ?? "capture_now" : "capture_now");
+                break;
+            case "exam_ended":
+                OnExamEnded?.Invoke();
+                break;
+            case "session_revoked":
+                OnSessionRevoked?.Invoke();
                 break;
             case "ping":
                 await SendRawAsync(ws, "{\"v\":1,\"type\":\"pong\",\"ts\":" + Now().ToString(System.Globalization.CultureInfo.InvariantCulture) + "}", ct).ConfigureAwait(false);

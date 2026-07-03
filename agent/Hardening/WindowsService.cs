@@ -14,11 +14,11 @@ public static class WindowsService
     public const string ServiceName = "HorusAgentWatchdog";
 
     /// 以服务身份运行(由 SCM 启动;也可控制台直接跑调试)。configArgs=传给采集模式的参数(config 路径)。
-    public static void Run(string selfExe, string[] configArgs, string examSeatKey)
+    public static void Run(string selfExe, string[] configArgs, string instanceKey)
     {
         IHost host = Host.CreateDefaultBuilder()
             .UseWindowsService(o => o.ServiceName = ServiceName)
-            .ConfigureServices(s => s.AddHostedService(_ => new WatchdogHostedService(selfExe, configArgs, examSeatKey)))
+            .ConfigureServices(s => s.AddHostedService(_ => new WatchdogHostedService(selfExe, configArgs, instanceKey)))
             .Build();
         host.Run();
     }
@@ -54,8 +54,8 @@ public static class WindowsService
 
 /// 服务托管的后台任务:跑看门狗 supervisor(serviceSession=true)。SCM 停止 → stoppingToken 取消 → 看门狗退出。
 [SupportedOSPlatform("windows")]
-internal sealed class WatchdogHostedService(string selfExe, string[] configArgs, string examSeatKey) : BackgroundService
+internal sealed class WatchdogHostedService(string selfExe, string[] configArgs, string instanceKey) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
-        => Task.Run(() => Watchdog.RunSupervisor(selfExe, configArgs, adoptPid: -1, examSeatKey, serviceSession: true, stoppingToken), stoppingToken);
+        => Task.Run(() => Watchdog.RunSupervisor(selfExe, configArgs, adoptPid: -1, instanceKey, serviceSession: true, stoppingToken), stoppingToken);
 }

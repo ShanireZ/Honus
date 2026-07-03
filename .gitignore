@@ -30,6 +30,12 @@ server.config.json
 *.sqlite
 /images/
 /archive/
+# 开发期从 server/ 起服务时的运行时数据目录(dataDir=./data → server/data;仅列运行时子目录,
+# 避免笼统 server/data/ 在 Windows git 大小写不敏感下误吞源码目录 server/Data/)
+server/data/images/
+server/data/archive/
+# CLIP ONNX 模型(~335MB·超 GitHub 单文件 100MB 上限)——部署时人工放置,不入 git
+*.onnx
 
 # === 证书 / 环境机密(切勿提交) ===
 .env

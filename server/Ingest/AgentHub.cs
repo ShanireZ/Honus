@@ -77,6 +77,37 @@ public sealed class AgentHub
         catch { return false; }
     }
 
+    /// 向该考试所有在线 Agent 推送一帧下行消息。返回送达连接数(掉线忽略)。
+    public async Task<int> PushToExamAsync(string examId, string frame, CancellationToken ct)
+    {
+        int n = 0;
+        foreach (KeyValuePair<string, Conn> kv in _conns)
+        {
+            if (kv.Value.ExamId != examId) continue;
+            try { await kv.Value.SendAsync(frame, ct); n++; } catch { /* 掉线忽略 */ }
+        }
+        return n;
+    }
+
+    /// 考试结束广播:通知在线 Agent 停止采集、排空缓冲后自行登出回待命(连接由 Agent 侧优雅收尾,不强断 —— 留续传窗口)。
+    public Task<int> PushExamEndedAsync(string examId, CancellationToken ct)
+        => PushToExamAsync(examId, JsonSerializer.Serialize(new { v = 1, type = "exam_ended", examId }), ct);
+
+    /// 全场远程登出广播(会话已在 DB 吊销):先通知,再**强断**该考试全部在线连接 ——
+    /// 已吊销会话的旧 WS 不能续用(握手时解析的 K_sess 仍在连接上下文里,不断开则事件仍会被收下)。
+    /// 通知与强断之间留极短窗口让帧送达;重连会因 invalid_session 被 401。
+    public async Task<int> PushSessionRevokedAsync(string examId, CancellationToken ct)
+    {
+        int n = await PushToExamAsync(examId, JsonSerializer.Serialize(new { v = 1, type = "session_revoked", examId }), ct);
+        try { await Task.Delay(200, ct); } catch (OperationCanceledException) { /* 关停中仍要强断 */ }
+        foreach (KeyValuePair<string, Conn> kv in _conns)
+        {
+            if (kv.Value.ExamId != examId) continue;
+            try { kv.Value.Ws.Abort(); } catch { /* 已断,忽略 */ }
+        }
+        return n;
+    }
+
     public void Unregister(string agentId, Conn c)
     {
         // 仅当仍是同一连接才移除,避免误删更晚的重连

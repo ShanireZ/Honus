@@ -224,6 +224,7 @@ if (cfg.OidcEnabled)
     builder.Services.AddSingleton(sp => new Horus.Server.Identity.OidcExchange(
         new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, validator,
         sp.GetRequiredService<Horus.Server.Identity.SessionStore>(), cfg, oidcSecret,
+        sp.GetRequiredService<Db>(),   // 考试派发:exchange 需查当前活跃考试
         sp.GetRequiredService<ILogger<Horus.Server.Identity.OidcExchange>>()));
 }
 

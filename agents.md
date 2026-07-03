@@ -11,7 +11,7 @@
 ## 组件与技术栈
 - **共享契约** [contracts/](contracts/)（`Horus.Contracts`，net8.0）：线协议 / canonical / HMAC / 枚举 / 事件模型。Agent 与 Server **共用同一实现**，保证哈希链与签名两端逐字节一致。
 - **采集核心** [agentcore/](agentcore/)（`Horus.Agent.Core`，net8.0）：平台无关的传输（WS/HTTP + 握手/hello/ack + **断线重连指数退避** + **续传**）、断网缓冲、配置、哈希链封装。刻意非 -windows，便于被测试直接引用。
-- **采集端 Agent**（考试机，每台一个）：C#/.NET 单文件 exe，需管理员权限（ETW / UIAutomation / WMI）。Windows 专属部分（抓屏 / 信号源）。代码 [agent/](agent/)（`Horus.Agent`，net8.0-windows，引用 Core）。
+- **采集端 Agent**（考试机，每台一个）：C#/.NET 单文件 exe，需管理员权限（ETW / UIAutomation / WMI）——exe 内嵌 `requireAdministrator` manifest，**双击即 UAC 提权**（免右键）。Windows 专属部分（抓屏 / 信号源）。代码 [agent/](agent/)（`Horus.Agent`，net8.0-windows，引用 Core）。
 - **监考服务器**（笔记本）：接收 + 分析 + 落库 + Web 看板。**.NET 8 / ASP.NET Core**（minimal API + WebSocket）+ **Microsoft.Data.Sqlite** + 文件系统（+ M3 起 sqlite-vec）。代码 [server/](server/)（`Horus.Server`，net8.0）。**仅服务器对外联网，且只为云 OCR**。
 - **监考端 / 复核台**：实时看板 + 可疑队列复核。纯原生单页看板在 [server/wwwroot/](server/wwwroot/)。
 - **测试**：[tests/](tests/)（`Horus.Server.Tests`，xUnit）——端到端覆盖 WS 握手/验签/幂等、图片去重、击键、人工裁决、canonical 黄金格式。
@@ -86,6 +86,13 @@ dotnet test  Horus.sln -c Debug      # 运行端到端测试
 - **F6** `LocalBuffer.MaxBufferedSeq` 不再全量读图字节(只解析文件名)。**F7** config 端点补 `IsSafeId`。**F8** no-referrer/no-store 提全局中间件。**F9** ParseConfidence 整数 1 不再放大成 100(仅严格 0<d<1)。**F10** 视觉解码 `Image.Identify` 先探尺寸拒超 4096² 防解码炸弹。
 - **D2** `capture_now` 帧从文档承诺变**真**(`POST /api/agents/{agentId}/capture` 推帧)。**D6** integrity 报告加 `sigVerified`/`note`(psk=null 联调"绿"不伪装取证清白)。文档漂移全清(测试数 130·event:manual·旧术语"云OCR/裁剪打码"·尾部截断诚实残留)。
 - **⚠️ A1/A2 事件通道跨身份栽赃 + seq 抢占**(共享 PSK 下真实·"事件体身份==握手 query"修法**无效**因握手可伪造任意身份)→ **owner 决策 = 学员机改账密登录 + 每次 cpplearn OIDC 授权(per-user 身份取代共享 PSK)**,OIDC 跨系统另立项;已诚实写进 architecture §10.1。
+
+**考试派发 + 常态待命 + 全场远程登出(owner 决策 2026-07-03 · 207 项测试全绿)**:
+- ✅ **examId 不再由 Agent 配置携带**:`/oidc/exchange` 服务端指派「当前活跃考试」(status='active' 最近创建一场;无则 `no_active_exam` 拒,且**先于 token 交换**判定不白耗一次性授权码);**seatId := OIDC username**(空/不安全回退 sub·`ExamDispatch.SeatFrom`)—— 座位=身份,学员无法自报;协议/canonical/schema/KSK **零迁移**(字段保留,来源改变),物理定位由 machineId/agentId 承担。
+- ✅ **Agent 常态待命循环**(oidc 模式):启动即待命轮询 `GET /oidc/active-exam`(**不采集不抓屏** —— 窗口外持续监控是隐私红线)→ 开考自动弹浏览器 OIDC 登录 → 采集 → 收 `exam_ended`(end 在线推送 / 重连 hello 按考试状态补发·留 5s 排空缓冲)或 `session_revoked`(立即停)→ 弃会话回待命等下一场;每 60s `GET /oidc/session` 探针兜底离线错过的推送。psk(legacy)模式保持配置 examId/seatId 的单场语义。
+- ✅ **全场远程登出** `POST /api/exams/{id}/logout`(admin 门内):`SessionStore.RevokeByExam` 吊销全部采集会话 + 推 `session_revoked` + **强断在线连接**(吊销会话的旧 WS 不能续用),重连 401;`POST /api/exams/{id}/end` 现在向在线 Agent 推 `exam_ended`(响应带 notified)。
+- ✅ **换场缓冲卫生**:新 OIDC 会话开始即 `LocalBuffer.PurgeSession`(旧 K_sess 已死,残留缓冲必 bad_sig 永不 ack → 每次重连重放-被拒死循环);seq 高水位保留 + hello_ack 对齐不撞旧 seq。
+- ✅ **默认管理员运行**:agent exe 内嵌 `requireAdministrator` manifest(双击即 UAC 提权,免右键);⚠️ requireAdministrator 程序**不能**挂 Run 键自启(系统静默跳过)—— 本就不常驻自启(考试前手动打开),保活场景走 `install-service`(LocalSystem 无 UAC)。看门狗单例键改 `agentId_machineId`(与考试解耦)。
 
 ## 提交约定
 默认不提交，除非用户明确要求。commit 信息用中文，简洁。

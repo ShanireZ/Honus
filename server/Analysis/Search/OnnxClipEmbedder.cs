@@ -62,7 +62,9 @@ public sealed class OnnxClipEmbedder : IImageEmbedder, IDisposable
     {
         _session = new InferenceSession(modelPath);
         _inputName = string.IsNullOrEmpty(inputName) ? _session.InputMetadata.Keys.First() : inputName!;
-        _outputName = string.IsNullOrEmpty(outputName) ? _session.OutputMetadata.Keys.First() : outputName!;
+        // ★输出选择:CLIP vision_model 常有多输出(last_hidden_state + pooler_output);取错=拿到一大坨 patch 序列而非嵌入。
+        //   留空则优先名字含 embed/pool 的输出(image_embeds / pooler_output),再退首个。可用 embedOnnxOutput 显式指定。
+        _outputName = SelectOutputName(_session.OutputMetadata.Keys, outputName);
         Dim = dim;
         _log = log;
         _log.LogInformation("ONNX CLIP 嵌入器就绪 model={Path} in={In} out={Out}", modelPath, _inputName, _outputName);
@@ -76,12 +78,32 @@ public sealed class OnnxClipEmbedder : IImageEmbedder, IDisposable
             var input = new DenseTensor<float>(chw, new[] { 1, 3, ClipPreprocess.Size, ClipPreprocess.Size });
             var feeds = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor(_inputName, input) };
             using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results = _session.Run(feeds, new[] { _outputName });
-            float[] vec = results.First().AsEnumerable<float>().ToArray();
+            Tensor<float> t = results.First().AsTensor<float>();
+            float[] vec = ExtractEmbedding(t.ToArray(), t.Dimensions.ToArray());
             if (vec.Length == 0) return Task.FromResult<float[]?>(null);
             VecMath.Normalize(vec);   // 单位化(检索用余弦,规范化无害)
             return Task.FromResult<float[]?>(vec);
         }
         catch (Exception ex) { _log.LogWarning(ex, "ONNX CLIP 推理失败 image={N}B", imageBytes.Length); return Task.FromResult<float[]?>(null); }
+    }
+
+    /// 选嵌入输出名:显式 override > 名含 "embed"(image_embeds) > 名含 "pool"(pooler_output) > 首个。
+    internal static string SelectOutputName(IEnumerable<string> outputs, string? overrideName)
+    {
+        if (!string.IsNullOrEmpty(overrideName)) return overrideName!;
+        var list = outputs.ToList();
+        return list.FirstOrDefault(n => n.Contains("embed", StringComparison.OrdinalIgnoreCase))
+            ?? list.FirstOrDefault(n => n.Contains("pool", StringComparison.OrdinalIgnoreCase))
+            ?? list.First();
+    }
+
+    /// 从输出张量取嵌入向量(batch=1):pooled [1,D]→全 D;序列 [1,S,D]→取首位(CLS)前 D 个。
+    /// 因行主序,[0,0,d] 恰是扁平缓冲前 D 个 → 统一取「前 last-dim 个」即可。
+    internal static float[] ExtractEmbedding(float[] flat, int[] dims)
+    {
+        if (flat.Length == 0) return flat;
+        int last = dims.Length > 0 ? dims[^1] : flat.Length;
+        return last > 0 && last <= flat.Length ? flat[..last] : flat;
     }
 
     public void Dispose() => _session.Dispose();

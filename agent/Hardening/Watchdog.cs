@@ -11,9 +11,9 @@ public static class Watchdog
     /// adoptPid≥0 时先监控**已存在**的采集进程(层2 互拉:看门狗被杀后由 agent 重新拉起并 adopt 现有 agent)。
     /// serviceSession=true(层1 服务模式):经 <see cref="SessionLauncher"/> 把采集拉进用户交互会话(session 0 截不到屏);
     /// false(层2 用户会话看门狗):普通 Process.Start。
-    public static int RunSupervisor(string selfExe, string[] childArgs, int adoptPid, string examSeatKey, bool serviceSession, CancellationToken ct)
+    public static int RunSupervisor(string selfExe, string[] childArgs, int adoptPid, string instanceKey, bool serviceSession, CancellationToken ct)
     {
-        using var single = new Mutex(initiallyOwned: false, "Global\\Horus_Watchdog_" + Sanitize(examSeatKey), out bool _);
+        using var single = new Mutex(initiallyOwned: false, "Global\\Horus_Watchdog_" + Sanitize(instanceKey), out bool _);
         bool held;
         try { held = single.WaitOne(0); }
         catch (AbandonedMutexException) { held = true; }   // 上个看门狗崩溃遗留 → 接管
@@ -59,26 +59,26 @@ public static class Watchdog
     }
 
     /// 采集端(agent 模式)守护:监控看门狗 pid,若看门狗被杀 → 拉起新看门狗(adopt 本 agent),继续守新看门狗。层2 互拉。
-    public static async Task GuardWatchdogAsync(int watchdogPid, string selfExe, string[] childArgs, string examSeatKey, CancellationToken ct)
+    public static async Task GuardWatchdogAsync(int watchdogPid, string selfExe, string[] childArgs, string instanceKey, CancellationToken ct)
     {
         int current = watchdogPid;
         while (!ct.IsCancellationRequested)
         {
             Process? wd = TryGetProcess(current);
-            if (wd is null) { current = RelaunchAdoptWatchdog(selfExe, childArgs, examSeatKey); if (current <= 0) return; }
+            if (wd is null) { current = RelaunchAdoptWatchdog(selfExe, childArgs, instanceKey); if (current <= 0) return; }
             else
             {
                 try { await wd.WaitForExitAsync(ct); }
                 catch (OperationCanceledException) { return; }
                 if (ct.IsCancellationRequested) return;
                 Console.Error.WriteLine("[horus-agent] 看门狗已退出,尝试重新拉起(adopt 本进程)。");
-                current = RelaunchAdoptWatchdog(selfExe, childArgs, examSeatKey);
+                current = RelaunchAdoptWatchdog(selfExe, childArgs, instanceKey);
                 if (current <= 0) return;
             }
         }
     }
 
-    private static int RelaunchAdoptWatchdog(string selfExe, string[] childArgs, string examSeatKey)
+    private static int RelaunchAdoptWatchdog(string selfExe, string[] childArgs, string instanceKey)
     {
         try
         {

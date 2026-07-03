@@ -26,6 +26,7 @@ public static class Endpoints
         AgentHub hub = app.Services.GetRequiredService<AgentHub>();
         ArchiveService archive = app.Services.GetRequiredService<ArchiveService>();
         AdminSessionStore adminSessions = app.Services.GetRequiredService<AdminSessionStore>();   // M4·RBAC 登出销毁
+        SessionStore sessions = app.Services.GetRequiredService<SessionStore>();                  // 采集会话(全场远程登出)
         ImageSearchStore searchStore = app.Services.GetRequiredService<ImageSearchStore>();
         ImageEmbedService embedService = app.Services.GetRequiredService<ImageEmbedService>();
 
@@ -556,8 +557,8 @@ public static class Endpoints
             return Results.Json(new { ok = true, examId, seatCount });
         });
 
-        // 结束考试
-        app.MapPost("/api/exams/{examId}/end", (string examId) =>
+        // 结束考试:落状态 + 向该考试在线 Agent 广播 exam_ended(Agent 排空缓冲后停采、登出回待命)
+        app.MapPost("/api/exams/{examId}/end", async (string examId, HttpContext ctx) =>
         {
             double now = Now();
             int changed = db.Locked(conn =>
@@ -566,7 +567,19 @@ public static class Endpoints
                     "UPDATE exams SET status='ended', ended_at=@ts WHERE exam_id=@e", ("@ts", now), ("@e", examId));
                 return c.ExecuteNonQuery();
             });
-            return changed > 0 ? Results.Json(new { ok = true, examId, status = "ended" }) : Results.NotFound();
+            if (changed == 0) return Results.NotFound();
+            int notified = await hub.PushExamEndedAsync(examId, ctx.RequestAborted);
+            return Results.Json(new { ok = true, examId, status = "ended", notified });
+        });
+
+        // 全场远程登出(监考员):吊销该考试全部 OIDC 采集会话 + 通知并强断在线连接。
+        // Agent 收到 session_revoked 即弃会话回待命;重连/上报因 invalid_session 一律 401,须重新 OIDC 登录。
+        app.MapPost("/api/exams/{examId}/logout", async (string examId, HttpContext ctx) =>
+        {
+            if (!IsSafeId(examId)) return Results.BadRequest(new { error = "bad_examId" });
+            int revoked = sessions.RevokeByExam(examId);
+            int notified = await hub.PushSessionRevokedAsync(examId, ctx.RequestAborted);
+            return Results.Json(new { ok = true, examId, revoked, notified });
         });
 
         // 下发配置热更新:存最新配置并推送给该考试所有在线 Agent(新连/重连 Agent 在 hello 时也会收到)
@@ -650,8 +663,8 @@ public static class Endpoints
 
     /// examId / seatId 安全性:非空、≤128、不含路径危险字符(/ \ : * ? " &lt; &gt; | 控制字符)与 ".."。
     /// **允许中文/字母数字/-_ 等普通字符**(考试名可中文)。防不同 id 经 Storage.Safe 归一到同一磁盘目录(目录混放),
-    /// 并收敛所有下游键长度。管理端点已鉴权,此为纵深收敛。
-    private static bool IsSafeId(string id)
+    /// 并收敛所有下游键长度。管理端点已鉴权,此为纵深收敛。internal:ExamDispatch 派生 seat 时复用同一规则。
+    internal static bool IsSafeId(string id)
     {
         if (id.Length is 0 or > 128 || id.Contains("..", StringComparison.Ordinal)) return false;
         foreach (char c in id)

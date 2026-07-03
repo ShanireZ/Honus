@@ -6,8 +6,10 @@ namespace Horus.Agent.Config;
 /// Agent 配置。从 JSON 加载(camelCase);PSK 为 base64 字符串,自动转 byte[]。
 public sealed class AgentConfig
 {
-    public required string ExamId { get; init; }
-    public required string SeatId { get; init; }
+    /// 考试与座位:**OIDC 模式不在配置里出现** —— examId 由服务端派发(当前活跃考试)、seatId 由 OIDC 身份派生
+    /// (username),登录成功后由 Program 填入(可写);psk(legacy)模式仍须在配置中提供。
+    public string ExamId { get; set; } = "";
+    public string SeatId { get; set; } = "";
     public required string AgentId { get; init; }
     public required string MachineId { get; init; }
 

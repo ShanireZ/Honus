@@ -93,10 +93,12 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
 
     private async Task OnHelloAsync(AgentHub.Conn conn, string agentId, CancellationToken ct)
     {
-        long maxSeq = db.Locked(c2 =>
+        (long maxSeq, string? examStatus) = db.Locked(c2 =>
         {
             using SqliteCommand c = c2.Cmd("SELECT COALESCE(MAX(seq),0) FROM events WHERE agent_id=@a", ("@a", agentId));
-            return Convert.ToInt64(c.ExecuteScalar());
+            long ms = Convert.ToInt64(c.ExecuteScalar());
+            using SqliteCommand st = c2.Cmd("SELECT status FROM exams WHERE exam_id=@e", ("@e", conn.ExamId));
+            return (ms, st.ExecuteScalar() as string);
         });
         await conn.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "hello_ack", maxSeq }), ct);
 
@@ -104,6 +106,11 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
         string? cfgJson = hub.GetConfig(conn.ExamId);
         if (cfgJson is not null)
             await conn.SendAsync(AgentHub.BuildConfigFrame(cfgJson), ct);
+
+        // 考试派发:Agent 离线期间考试被结束/归档 → 重连 hello 时补发 exam_ended(先让上面的续传窗口存在:
+        // Agent 收到后先排空缓冲再停采回待命,end 时刻附近的证据不丢)。无考试记录(联调/psk 未建考试)不发。
+        if (examStatus is not null && examStatus != "active")
+            await conn.SendAsync(JsonSerializer.Serialize(new { v = 1, type = "exam_ended", examId = conn.ExamId }), ct);
     }
 
     private async Task OnEventAsync(AgentHub.Conn link, JsonElement frame, byte[]? authKey, HorusSession? session, CancellationToken ct)

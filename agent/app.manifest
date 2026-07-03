@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 默认管理员运行(owner 决策 2026-07-03):双击即触发 UAC 提权,免去「右键→以管理员身份运行」。
+     采集需管理员权限跑 ETW / UIAutomation / WMI(否则上报 capability_degraded)。
+     注意:requireAdministrator 的 exe **不能**挂 HKCU/HKLM Run 键自启(会被系统静默跳过)——
+     本程序本就不常驻自启(考试前手动打开),保活场景走 install-service(LocalSystem,无 UAC)。 -->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+</assembly>

@@ -13,8 +13,9 @@ namespace Horus.Agent.Identity;
 /// SessionId 非空时握手/上传带 X-Horus-Session 头。
 public sealed record IngestCredential(byte[] Key, string? SessionId);
 
-/// OIDC 登录换会话结果(Agent 侧)。
-public sealed record OidcSession(string SessionId, byte[] KSess, double ExpiresAt, string ProfileJson);
+/// OIDC 登录换会话结果(Agent 侧)。ExamId/SeatId 为**服务端派发值**(当前活跃考试 + username 派生座位),
+/// Agent 采用它们填事件体/握手 —— 配置文件里已无这两项。
+public sealed record OidcSession(string SessionId, byte[] KSess, double ExpiresAt, string ProfileJson, string ExamId, string SeatId);
 
 /// M4·A1:Agent 登录流(拓扑 A·Server-Broker)。系统浏览器走 cpplearn 授权码 + PKCE,回调落本机 loopback,
 /// 拿 code + PKCE verifier + 自己的 ECDH 公钥 POST 到 **Horus Server /oidc/exchange**(Server 持 secret 换 token+验签),
@@ -57,11 +58,12 @@ public static class OidcLoginFlow
         string code = await AwaitCodeAsync(listener, state, ct);
         listener.Stop();
 
-        // 5) 到 Horus Server 换会话(Server 持 secret 换 token + 离线验签)
+        // 5) 到 Horus Server 换会话(Server 持 secret 换 token + 离线验签)。
+        //    不再上送 examId/seatId —— examId 服务端派发,seatId 由 OIDC 身份派生,二者从响应取回。
         var reqBody = new
         {
             code, codeVerifier, redirectUri, nonce, agentEcdhPub = agentPub,
-            examId = cfg.ExamId, seatId = cfg.SeatId, agentId = cfg.AgentId, machineId = cfg.MachineId,
+            agentId = cfg.AgentId, machineId = cfg.MachineId,
         };
         using var content = new StringContent(JsonSerializer.Serialize(reqBody), Encoding.UTF8, "application/json");
         using HttpResponseMessage resp = await http.PostAsync($"{cfg.ServerHttpBase}/oidc/exchange", content, ct).ConfigureAwait(false);
@@ -74,10 +76,12 @@ public static class OidcLoginFlow
         string serverPub = root.GetProperty("serverEcdhPub").GetString()!;
         double expiresAt = root.TryGetProperty("expiresAt", out JsonElement ex) ? ex.GetDouble() : 0;
         string profileJson = root.TryGetProperty("profile", out JsonElement p) ? p.GetRawText() : "{}";
+        string examId = root.GetProperty("examId").GetString()!;   // 服务端派发,缺失即协议不符 → 抛错
+        string seatId = root.GetProperty("seatId").GetString()!;
 
         // 6) 本地派生 K_sess(与 Server 一致;私钥全程不过网)
         byte[] kSess = SessionCrypto.DeriveKey(agentKey, serverPub);
-        return new OidcSession(sessionId, kSess, expiresAt, profileJson);
+        return new OidcSession(sessionId, kSess, expiresAt, profileJson, examId, seatId);
     }
 
     private static async Task<string> AwaitCodeAsync(HttpListener listener, string expectedState, CancellationToken ct)

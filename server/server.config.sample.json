@@ -86,11 +86,12 @@
   //   ★探测过:小米 MiMo-V2.5 **无** /v1/embeddings 端点(仅对话/视觉/ASR/TTS)→ 复用视觉 key 走不通,故用本地 onnx。
   //   部署前可 `Horus.Server probe-embed [model]` 探测某云端点是否有图像 embedding 模型。
   "embedProvider": "",
-  // --- provider=onnx(本地 CLIP·推荐)---
-  // embedOnnxModelPath: CLIP ViT-B/32 **图像编码器** ONNX(512 维)路径(相对 dataDir 或绝对)。
-  //   获取:HuggingFace `Xenova/clip-vit-base-patch32` 的 onnx/vision_model.onnx;或用 optimum 从 openai/clip-vit-base-patch32 导出。
+  // --- provider=onnx(本地 CLIP·推荐·零出网)---
+  // embedOnnxModelPath: CLIP ViT-B/32 **图像编码器** ONNX(512 维)路径(相对 dataDir 或绝对)。只需下一个 .onnx,预处理/解码器已内置。
+  //   下载(推荐·MIT·352MB): https://huggingface.co/Qdrant/clip-ViT-B-32-vision/resolve/main/model.onnx
+  //   小体积备选:            https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model.onnx (或 vision_model_quantized.onnx int8)
   "embedOnnxModelPath": "",
-  // embedOnnxInput / embedOnnxOutput: 张量名(留空=模型首个输入/输出;CLIP 常为 pixel_values / image_embeds)。
+  // embedOnnxInput / embedOnnxOutput: 张量名。**留空即可**——自动选(输入取首个;输出优先名含 embed/pool 的·正确取嵌入向量)。特殊模型用 Netron 看输出名再填。
   "embedOnnxInput": "",
   "embedOnnxOutput": "",
   // --- provider=openai(云·仅当有图像/多模态 embedding 端点时)---

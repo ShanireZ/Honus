@@ -247,7 +247,9 @@ public class IntegrityTests
 
         using WebSocket ws = await app.ConnectEventsAsync(Exam, Seat, Agent);
         await Ws.SendAsync(ws, "{\"v\":1,\"type\":\"hello\"}");
-        await Ws.ReceiveAsync(ws);
+        await Ws.ReceiveAsync(ws);                                        // hello_ack
+        JsonElement ended = await Ws.ReceiveAsync(ws);                    // 考试派发:非 active 考试 hello 即补发 exam_ended
+        Assert.Equal("exam_ended", ended.GetProperty("type").GetString());
         await SendChainedAsync(ws, 1, "GENESIS");   // 内含 ack 断言:仍 ack(让 Agent 停发)
 
         JsonElement events = await http.GetFromJsonAsync<JsonElement>($"/api/exams/{Exam}/events?seatId={Seat}");

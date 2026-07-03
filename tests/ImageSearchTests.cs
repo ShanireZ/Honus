@@ -117,6 +117,37 @@ public class ClipPreprocessTests
     }
 }
 
+/// M3 本地 ONNX:输出选择 + 向量提取(CLIP vision 多输出场景·纯逻辑可测)。
+public class OnnxOutputTests
+{
+    [Fact]
+    public void 选输出_显式优先()
+        => Assert.Equal("x", OnnxClipEmbedder.SelectOutputName(new[] { "a", "b" }, "x"));
+
+    [Fact]
+    public void 选输出_优先embed再pool再首个()
+    {
+        Assert.Equal("image_embeds", OnnxClipEmbedder.SelectOutputName(new[] { "last_hidden_state", "image_embeds" }, null));
+        Assert.Equal("pooler_output", OnnxClipEmbedder.SelectOutputName(new[] { "last_hidden_state", "pooler_output" }, null));
+        Assert.Equal("out0", OnnxClipEmbedder.SelectOutputName(new[] { "out0", "out1" }, null));   // 都不含 → 首个
+    }
+
+    [Fact]
+    public void 取向量_pooled取全部()
+    {
+        var flat = new float[] { 1, 2, 3, 4 };
+        Assert.Equal(flat, OnnxClipEmbedder.ExtractEmbedding(flat, new[] { 1, 4 }));   // [1,4] → 全 4
+    }
+
+    [Fact]
+    public void 取向量_序列取CLS前D()
+    {
+        // [1,2,3] 序列:2 个位置 × 3 维 = 6 元;取首位(CLS)前 3 个。
+        var flat = new float[] { 10, 11, 12, 20, 21, 22 };
+        Assert.Equal(new float[] { 10, 11, 12 }, OnnxClipEmbedder.ExtractEmbedding(flat, new[] { 1, 2, 3 }));
+    }
+}
+
 public class TopNTests
 {
     [Fact]

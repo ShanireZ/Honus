@@ -9,6 +9,9 @@
     <AssemblyName>Horus.Agent</AssemblyName>
     <RootNamespace>Horus.Agent</RootNamespace>
 
+    <!-- 默认管理员运行:requireAdministrator manifest(双击即 UAC 提权,免右键)。见 app.manifest 内注释。 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
     <!-- UIAutomation(System.Windows.Automation, 读浏览器地址栏) 需 WPF 程序集;
          隐藏消息窗口(剪贴板) + Screen 信息 需 WinForms。两者在 net*-windows 下可共存。 -->
     <UseWPF>true</UseWPF>

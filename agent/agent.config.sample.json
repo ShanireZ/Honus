@@ -1,12 +1,16 @@
 {
-  "examId": "E1-2026-06-28",
-  "seatId": "A07",
-  "agentId": "ag-A07",
-  "machineId": "PC-A07",
+  // 身份:每机固定。examId/seatId **不再配置** —— examId 由服务端派发(当前活跃考试),
+  // seatId 由 OIDC 身份派生(cpplearn username)。psk(legacy)模式才需要手工补 examId/seatId。
+  "agentId": "ag-PC01",
+  "machineId": "PC-01",
 
   "serverWsBase": "ws://192.168.1.10:8080",
   "serverHttpBase": "http://192.168.1.10:8080",
-  "psk": "REPLACE_ME_base64_32byte_key_AAAAAAAAAAAAAAA=",
+
+  // 采集鉴权:oidc(推荐·启动后待命,开考弹浏览器登录 cpplearn 换会话) | psk(legacy·须另配 psk/examId/seatId)
+  "authMode": "oidc",
+  "oidcIssuer": "https://betaoi.cc",
+  "oidcClientId": "horus-client",
 
   "targetHeight": 1080,
   "webpQuality": 75,

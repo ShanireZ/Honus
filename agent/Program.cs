@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Horus.Agent.Buffer;
 using Horus.Agent.Capture;
 using Horus.Agent.Config;
@@ -12,6 +13,10 @@ using Horus.Contracts;   // AgentEvent / SignalType / Envelope(线协议共享)
 namespace Horus.Agent;
 
 /// 采集端入口。默认 MTA(利于 UIAutomation 客户端);剪贴板监听自带 STA 线程。
+/// 考试派发(owner 决策 2026-07-03):OIDC 模式 = **常态待命循环** —— 配置里没有 examId/seatId;
+/// 轮询服务器「有无活跃考试」→ 有则弹浏览器 OIDC 登录(examId 服务端派发·seatId 由身份派生)→ 采集;
+/// 收到 exam_ended / session_revoked(或会话探针发现失效)→ 停采、弃会话,回待命等下一场。
+/// psk(legacy)模式保持单场语义:examId/seatId 仍来自配置,运行至 Ctrl+C。
 internal static class Program
 {
     private static int Main(string[] args)
@@ -31,7 +36,7 @@ internal static class Program
                     return Hardening.WindowsService.Uninstall();
                 case "--service":
                     if (!OperatingSystem.IsWindows()) return 1;
-                    Hardening.WindowsService.Run(selfExe, args.Skip(1).ToArray(), ExamSeatKey(args.Skip(1).ToArray()));
+                    Hardening.WindowsService.Run(selfExe, args.Skip(1).ToArray(), InstanceKey(args.Skip(1).ToArray()));
                     return 0;
                 case "--watchdog":
                 {
@@ -41,7 +46,7 @@ internal static class Program
                     string[] wArgs = rest.ToArray();
                     using var wct = new CancellationTokenSource();
                     Console.CancelKeyPress += (_, e) => { e.Cancel = true; wct.Cancel(); };
-                    return Hardening.Watchdog.RunSupervisor(selfExe, wArgs, adopt, ExamSeatKey(wArgs), serviceSession: false, wct.Token);
+                    return Hardening.Watchdog.RunSupervisor(selfExe, wArgs, adopt, InstanceKey(wArgs), serviceSession: false, wct.Token);
                 }
             }
         }
@@ -54,28 +59,84 @@ internal static class Program
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-        var buffer = new LocalBuffer(Path.Combine(AppContext.BaseDirectory, "buffer"));
+        if (!cfg.OidcMode)
+        {
+            // ---- psk(legacy)模式:examId/seatId 来自配置,单场运行至 Ctrl+C ----
+            if (cfg.Psk is null) { Console.Error.WriteLine("[horus-agent] psk 模式需在配置提供 psk"); return 1; }
+            if (cfg.ExamId.Length == 0 || cfg.SeatId.Length == 0)
+            { Console.Error.WriteLine("[horus-agent] psk 模式需在配置提供 examId/seatId(oidc 模式二者由服务器派发)"); return 1; }
+            RunCollectionSession(cfg, cfgPath, selfExe, new IngestCredential(cfg.Psk, null), probeHttp: null, cts.Token);
+            return 0;
+        }
 
-        // M4·A1/A2:采集凭证 —— OIDC 模式先经 cpplearn 登录换会话(浏览器·near-无感),得 K_sess + sessionId;
-        // PSK 模式沿用共享 PSK。登录前不连服务器、不采集(A3:未认证不上报)。
-        IngestCredential cred;
-        if (cfg.OidcMode)
+        // ---- OIDC 模式:常态待命循环 ----
+        Console.WriteLine("[horus-agent] OIDC 模式:待命中(不采集),等待服务器开考…");
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        while (!cts.IsCancellationRequested)
+        {
+            if (!WaitForActiveExam(cfg, http, cts.Token)) break;   // 已取消
+
+            OidcSession session;
+            try
+            {
+                Console.WriteLine("[horus-agent] 检测到活跃考试:即将打开系统浏览器完成 cpplearn 授权…");
+                using var loginHttp = new HttpClient();
+                session = OidcLoginFlow.LoginAsync(cfg, loginHttp, ct: cts.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[horus-agent] OIDC 登录失败: {ex.Message};10s 后重试。");
+                if (cts.Token.WaitHandle.WaitOne(10_000)) break;
+                continue;
+            }
+
+            cfg.ExamId = session.ExamId;   // 服务端派发的当前考试
+            cfg.SeatId = session.SeatId;   // OIDC 身份派生(username)
+            Console.WriteLine($"[horus-agent] OIDC 登录成功 exam={cfg.ExamId} seat={cfg.SeatId},开始采集。");
+            RunCollectionSession(cfg, cfgPath, selfExe, new IngestCredential(session.KSess, session.SessionId), http, cts.Token);
+
+            if (cts.IsCancellationRequested) break;
+            Console.WriteLine("[horus-agent] 本场结束,回待命(等待下一场考试)…");
+        }
+        return 0;
+    }
+
+    /// 待命轮询:每 5s 查一次 /oidc/active-exam,直到出现活跃考试(true)或取消(false)。不采集、不抓屏、不连 WS。
+    private static bool WaitForActiveExam(AgentConfig cfg, HttpClient http, CancellationToken ct)
+    {
+        bool noticePrinted = false;
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                Console.WriteLine("[horus-agent] OIDC 登录:即将打开系统浏览器完成 cpplearn 授权…");
-                using var loginHttp = new HttpClient();
-                OidcSession session = OidcLoginFlow.LoginAsync(cfg, loginHttp, ct: cts.Token).GetAwaiter().GetResult();
-                cred = new IngestCredential(session.KSess, session.SessionId);
-                Console.WriteLine("[horus-agent] OIDC 登录成功,会话已建立。");
+                string body = http.GetStringAsync($"{cfg.ServerHttpBase}/oidc/active-exam", ct).GetAwaiter().GetResult();
+                using JsonDocument doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("active", out JsonElement a) && a.GetBoolean()) return true;
+                if (!noticePrinted) { Console.WriteLine("[horus-agent] 暂无活跃考试,待命轮询中…"); noticePrinted = true; }
             }
-            catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] OIDC 登录失败: {ex.Message}"); return 1; }
+            catch (OperationCanceledException) { return false; }
+            catch (Exception ex)
+            {
+                if (!noticePrinted) { Console.Error.WriteLine($"[horus-agent] 服务器暂不可达({ex.Message}),待命轮询中…"); noticePrinted = true; }
+            }
+            if (ct.WaitHandle.WaitOne(5_000)) return false;
         }
-        else
-        {
-            if (cfg.Psk is null) { Console.Error.WriteLine("[horus-agent] psk 模式需在配置提供 psk"); return 1; }
-            cred = new IngestCredential(cfg.Psk, null);
-        }
+        return false;
+    }
+
+    /// 跑一场采集会话:装配信号源/上行/哈希链,阻塞至「考试结束 / 被远程登出 / 探针发现会话失效 / 全局退出」。
+    /// probeHttp 非空(OIDC 模式)时启用:下行帧回调 + 每 60s 会话探针兜底(覆盖离线错过推送的情形)。
+    private static void RunCollectionSession(AgentConfig cfg, string cfgPath, string selfExe,
+        IngestCredential cred, HttpClient? probeHttp, CancellationToken outerCt)
+    {
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(outerCt);
+        CancellationToken ct = sessionCts.Token;
+
+        var buffer = new LocalBuffer(Path.Combine(AppContext.BaseDirectory, "buffer"));
+        // OIDC 换场/重登:旧会话 K_sess 已死,残留缓冲永不可验签(bad_sig)→ 清掉,防每次重连重放-被拒。
+        // seq 高水位保留(seq.state),且 hello_ack 会按服务器 MAX(seq) 对齐,不会撞旧 seq。
+        if (cred.SessionId is not null) buffer.PurgeSession();
 
         var uplink = new UplinkClient(cfg, buffer, cred);
         var chain = new HashChain(cred.Key);
@@ -84,7 +145,7 @@ internal static class Program
 
         // 上传委托:WebP → imageId(自带 seq)
         async Task<string?> Upload(byte[] webp, string trigger, ulong phash)
-            => await uplink.UploadImageAsync(webp, trigger, phash, uplink.NextSeq(), cts.Token);
+            => await uplink.UploadImageAsync(webp, trigger, phash, uplink.NextSeq(), ct);
 
         var capturer = new ScreenshotCapturer(live, Upload);
 
@@ -94,6 +155,22 @@ internal static class Program
         {
             live.Apply(json);
             Console.WriteLine("[horus-agent] 已应用 config_update 热更新");
+        };
+        // 考试结束(在线推送 / 重连 hello 补发):留 5s 排空缓冲续传窗口,再停采回待命。
+        uplink.OnExamEnded = () =>
+        {
+            Console.WriteLine("[horus-agent] 考试已结束:5s 内排空缓冲后停止采集。");
+            _ = Task.Run(async () =>
+            {
+                try { await Task.Delay(5_000, ct); } catch (OperationCanceledException) { /* 已在停 */ }
+                sessionCts.Cancel();
+            });
+        };
+        // 被监考员远程登出:会话已吊销、连接随后被强断,续传无望 → 立即停。
+        uplink.OnSessionRevoked = () =>
+        {
+            Console.WriteLine("[horus-agent] 已被监考员远程登出:停止采集,回待命。");
+            sessionCts.Cancel();
         };
 
         // 事件管线:RawSignal →(必要时抓图)→ 盖章(ts/seq/hash)→ 发送
@@ -122,7 +199,7 @@ internal static class Program
                     var (hp, hs, sig) = chain.Seal(stamped, seq);
                     json = Envelope.Serialize(stamped with { HashPrev = hp, HashSelf = hs }, sig);
                 }
-                await uplink.SendEventAsync(json, seq, cts.Token);
+                await uplink.SendEventAsync(json, seq, ct);
             }
             catch (Exception ex) { Console.Error.WriteLine($"[horus-agent] 处理信号异常: {ex.Message}"); }
         }
@@ -138,8 +215,8 @@ internal static class Program
         };
         foreach (ISignalSource s in sources) s.Signal += Handle;
 
-        // 连接管理(握手/hello/续传/断线重连)在后台常驻,直到 cts 取消
-        Task uplinkTask = Task.Run(() => uplink.RunAsync(cts.Token));
+        // 连接管理(握手/hello/续传/断线重连)在后台常驻,直到会话取消
+        Task uplinkTask = Task.Run(() => uplink.RunAsync(ct));
         var failedSources = new List<string>();
         foreach (ISignalSource s in sources)
         {
@@ -178,27 +255,67 @@ internal static class Program
             Handle(new RawSignal(SignalType.CapabilityDegraded,
                 new() { ["capability"] = name, ["status"] = "start_failed" }, Risk: 55));
 
-        _ = Task.Run(() => BaselineLoop(live, capturer, cts.Token));
-        _ = Task.Run(() => HeartbeatLoop(Handle, cts.Token));
-        _ = Task.Run(() => HealthLoop(Handle, cts.Token));   // ④ 挂起检测
+        _ = Task.Run(() => BaselineLoop(live, capturer, ct));
+        _ = Task.Run(() => HeartbeatLoop(Handle, ct));
+        _ = Task.Run(() => HealthLoop(Handle, ct));   // ④ 挂起检测
         // ⑤ 层2 互拉:若由看门狗拉起(HORUS_WATCHDOG_PID),守护看门狗——它被杀则重拉一个 adopt 本进程的新看门狗。
+        // 键 = agentId_machineId(与考试无关:考试派发后配置里已无 exam/seat,且看门狗单例本就该按机器算)。
         if (int.TryParse(Environment.GetEnvironmentVariable("HORUS_WATCHDOG_PID"), out int wdPid) && wdPid > 0)
-            _ = Task.Run(() => Watchdog.GuardWatchdogAsync(wdPid, selfExe, new[] { cfgPath }, cfg.ExamId + "_" + cfg.SeatId, cts.Token));
+            _ = Task.Run(() => Watchdog.GuardWatchdogAsync(wdPid, selfExe, new[] { cfgPath }, cfg.AgentId + "_" + cfg.MachineId, ct));
+        // ⑥ 会话探针(OIDC):每 60s 校验会话仍有效 + 考试仍 active —— 兜住「离线时被远程登出/考试结束」错过推送的情形。
+        if (cred.SessionId is not null && probeHttp is not null)
+            _ = Task.Run(() => SessionProbeLoop(cfg, probeHttp, cred.SessionId, sessionCts));
 
-        Console.WriteLine($"[horus-agent] 运行中 seat={cfg.SeatId} exam={cfg.ExamId}。Ctrl+C 退出。");
-        cts.Token.WaitHandle.WaitOne();
+        Console.WriteLine($"[horus-agent] 采集中 seat={cfg.SeatId} exam={cfg.ExamId}。Ctrl+C 退出。");
+        ct.WaitHandle.WaitOne();
 
         RestartMarker.MarkClean(markerPath);   // M5:正常退出写 clean → 下次启动不误判异常重启
         foreach (ISignalSource s in sources) { try { s.Stop(); s.Dispose(); } catch { /* ignore */ } }
         try { uplinkTask.Wait(TimeSpan.FromSeconds(3)); } catch { /* 等连接循环退出再释放,避免 dispose 竞态 */ }
         uplink.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        return 0;
     }
 
-    /// 看门狗单例键 / adopt 用:从 config 取 exam_seat(加载失败回退 default)。
-    private static string ExamSeatKey(string[] args)
+    /// 会话探针:GET /oidc/session(带 X-Horus-Session)。valid=false → 已被登出/过期,立即停;
+    /// examStatus 非 active → 考试已结束(错过推送),留 5s 排空后停。网络错误忽略(断网由缓冲续传兜)。
+    private static async Task SessionProbeLoop(AgentConfig cfg, HttpClient http, string sessionId, CancellationTokenSource sessionCts)
     {
-        try { AgentConfig c = AgentConfig.Load(args.Length > 0 ? args[0] : "agent.config.json"); return c.ExamId + "_" + c.SeatId; }
+        CancellationToken ct = sessionCts.Token;
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(TimeSpan.FromSeconds(60), ct); }
+            catch (TaskCanceledException) { break; }
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, $"{cfg.ServerHttpBase}/oidc/session");
+                req.Headers.Add("X-Horus-Session", sessionId);
+                using HttpResponseMessage resp = await http.SendAsync(req, ct);
+                if (!resp.IsSuccessStatusCode) continue;   // 服务器异常 ≠ 会话失效
+                using JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                JsonElement root = doc.RootElement;
+                if (!root.GetProperty("valid").GetBoolean())
+                {
+                    Console.WriteLine("[horus-agent] 会话探针:会话已失效(被远程登出/过期),停止采集回待命。");
+                    sessionCts.Cancel();
+                    break;
+                }
+                string status = root.TryGetProperty("examStatus", out JsonElement st) ? st.GetString() ?? "unknown" : "unknown";
+                if (status is not ("active" or "unknown"))
+                {
+                    Console.WriteLine("[horus-agent] 会话探针:考试已结束,5s 内排空缓冲后停止采集。");
+                    try { await Task.Delay(5_000, ct); } catch (TaskCanceledException) { /* 已在停 */ }
+                    sessionCts.Cancel();
+                    break;
+                }
+            }
+            catch (OperationCanceledException) { break; }
+            catch { /* 网络抖动忽略,下轮再探 */ }
+        }
+    }
+
+    /// 看门狗单例键 / adopt 用:agentId_machineId(每机稳定,与考试无关;配置里已无 exam/seat)。加载失败回退 default。
+    private static string InstanceKey(string[] args)
+    {
+        try { AgentConfig c = AgentConfig.Load(args.Length > 0 ? args[0] : "agent.config.json"); return c.AgentId + "_" + c.MachineId; }
         catch { return "default"; }
     }
 

@@ -44,6 +44,15 @@ public sealed class SessionStore(Db db)
             kSess, now, expiresAt);
     }
 
+    /// 按考试吊销全部采集会话(监考员远程登出全场)。吊销后 Get 查无此会话 → 重连/上报一律 401,Agent 须重登。
+    /// 返回吊销条数。
+    public int RevokeByExam(string examId)
+        => db.Write(conn =>
+        {
+            using SqliteCommand c = conn.Cmd("DELETE FROM oidc_sessions WHERE exam_id=@e", ("@e", examId));
+            return c.ExecuteNonQuery();
+        });
+
     /// 按 sessionId 取会话;不存在或**已过期**返回 null(过期即拒,Agent 须重登)。
     public HorusSession? Get(string sessionId, double now)
     {

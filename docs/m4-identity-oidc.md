@@ -69,7 +69,9 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
   │                            │◄── 4. 浏览器已登 cpplearn(判题会话)→ 免账密 → (首次)同意 ──►│
   │◄── 5. 302 → 127.0.0.1:PORT/cb?code&state ─┤                                               │
   │ 6. 校验 state;POST /oidc/exchange
-  │      { code, code_verifier, agentPubKey, examId, machineId } ──────►│                     │
+  │      { code, code_verifier, agentPubKey, agentId, machineId } ─────►│                     │
+  │      (不再上送 examId/seatId:examId 服务端派发=当前活跃考试,      │                     │
+  │       seatId 由 OIDC 身份派生=username;无活跃考试 → no_active_exam)│                     │
   │                                                                     │ 7. 持 client_secret │
   │                                                                     │  换 token ──────────►│
   │                                                                     │◄─ 8. id_token(JWT) ─┤
@@ -80,7 +82,7 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
   │                                                                     │  ↔ {sub,profile,     │
   │                                                                     │  agentPubKey,exam,   │
   │                                                                     │  machineId, 有效期}  │
-  │◄── 11. { sessionId, profile:{username,nickname,daoName,realm,combat,avatar} } ─┤          │
+  │◄── 11. { sessionId, examId(派发), seatId(=username), profile:{…} } ─┤                    │
   │ 12. ingest(事件/图片/击键) 用 sessionId + **私钥签名**;Server 验签+强制身份==会话身份     │
 ```
 
@@ -131,8 +133,8 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
 | # | 任务 | 要点 |
 |---|---|---|
 | S1 | **OIDC 客户端模块** | 换 token = 向 cpplearn `/token` POST（client_secret_post）;ID token 验签用 `Microsoft.IdentityModel.Tokens`（RS256）+ **预置 cpplearn JWKS 公钥**（启动时可从公网 cpplearn 拉 JWKS 缓存 + kid 校验;离线兜底用配置内嵌公钥）。校验 iss/aud(=horus client_id)/exp/nonce |
-| S2 | **会话存储** | `sessionId → {sub, profile, agentPubKey, examId, machineId, issuedAt, expiresAt}`;有效期 = 考试时长上限;落库（重启存活）或内存+持久化 |
-| S3 | **`/oidc/exchange` 端点** | 收 `{code, code_verifier, agentPubKey, examId, machineId}` → 换 token → 验签 → 建会话 → 回 `{sessionId, profile}`。一次性 code 防重放 |
+| S2 | **会话存储** | `sessionId → {sub, profile, agentPubKey, examId, machineId, issuedAt, expiresAt}`;有效期 = 考试时长上限;落库（重启存活）或内存+持久化。**考试派发(2026-07-03)**:新增 `RevokeByExam`（全场远程登出即 DELETE 会话） |
+| S3 | **`/oidc/exchange` 端点** | 收 `{code, code_verifier, agentPubKey, agentId, machineId}` → 换 token → 验签 → 建会话 → 回 `{sessionId, examId, seatId, profile}`。一次性 code 防重放。**考试派发(2026-07-03)**:examId 服务端指派（当前活跃考试,无则 `no_active_exam` 拒,且先于 token 交换,不白耗授权码）;seatId := username（不安全/空回退 sub,`ExamDispatch.SeatFrom`）;配套 `GET /oidc/active-exam`（待命轮询·公开）与 `GET /oidc/session`（会话探针·sessionId 即凭证） |
 | S4 | **ingest 鉴权改造** | 握手/事件/图片/击键改验**会话公钥签名**（Ed25519）而非 PSK;**强制事件体身份 == 会话 sub**;seq 归属会话 → 闭合 A1/A2 |
 | S5 | **authMode 门** | 配置 `authMode: psk \| oidc \| both`（迁移用，见 §6）;`both` 兼容旧 PSK 连接与新 OIDC 会话 |
 | S6 | **座位/身份模型** | `seats`/`events.seat_id` 语义改为 cpplearn 账户标识;`seats` 存 `sub` + 富 profile 快照;看板展示用户名/昵称/道号/境界/战力/头像 |
