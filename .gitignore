@@ -1,6 +1,8 @@
 # === .NET (agent/) ===
 [Bb]in/
 [Oo]bj/
+# 成品发布物(真机验收包·体积大·含运行时/原生库)——不入 git,只在磁盘 dist/。
+dist/
 .vs/
 *.user
 *.suo
