@@ -465,6 +465,12 @@ public class FailClosedTests
             Environment.SetEnvironmentVariable("HORUS_PSK_B64", TestApp.PskB64);   // 有 PSK
             Environment.SetEnvironmentVariable("HORUS_ADMIN_TOKEN", null);         // 但缺管理令牌
             Environment.SetEnvironmentVariable("HORUS_URLS", "http://0.0.0.0:5199"); // 非 loopback
+            // ★隔离进程全局 env 泄漏:AdminOidcTests 等会置 HORUS_ADMIN_AUTH_MODE=oidc + dashboard client,
+            //   若不复位,DashboardOidcEnabled=true → AdminAuthEnabled=true → fail-closed 不触发(此测试曾偶发不抛)。
+            foreach (string k in new[] { "HORUS_ADMIN_AUTH_MODE", "HORUS_OIDC_DASHBOARD_CLIENT_ID",
+                "HORUS_OIDC_DASHBOARD_SECRET", "HORUS_OIDC_DASHBOARD_REDIRECT",
+                "HORUS_AUTH_MODE", "HORUS_OIDC_ISSUER", "HORUS_OIDC_CLIENT_ID", "HORUS_OIDC_JWKS" })
+                Environment.SetEnvironmentVariable(k, null);
 
             using var f = new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>();
             Assert.ThrowsAny<Exception>(() => f.CreateClient());   // fail-closed:构建即抛
