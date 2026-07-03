@@ -66,11 +66,11 @@ public sealed class AdminOidcFlow
         if (!_pending.TryRemove(state, out Pending p)) return new Result(false, "unknown_state", null);   // 单次使用·防重放/CSRF
         if (now - p.CreatedAt > PendingTtlSeconds) return new Result(false, "state_expired", null);
 
-        // 换 token(client_secret_post + PKCE code_verifier)
+        // 换 token(client_secret_post + PKCE code_verifier)。瞬时 TLS/网络失败自动重试(见 OidcHttp)。
         string? idToken;
         try
         {
-            using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+            var fields = new Dictionary<string, string>
             {
                 ["grant_type"] = "authorization_code",
                 ["code"] = code,
@@ -78,12 +78,11 @@ public sealed class AdminOidcFlow
                 ["client_id"] = _cfg.OidcDashboardClientId!,
                 ["client_secret"] = _clientSecret,
                 ["code_verifier"] = p.Verifier,
-            });
-            using HttpResponseMessage resp = await _http.PostAsync(_cfg.OidcTokenEndpoint!, form, ct);
-            string body = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
+            };
+            (bool ok, int status, string body) = await OidcHttp.PostFormWithRetryAsync(_http, _cfg.OidcTokenEndpoint!, fields, _log, ct);
+            if (!ok)
             {
-                _log.LogWarning("监考员 OIDC token 端点非 200:{Status}", (int)resp.StatusCode);
+                _log.LogWarning("监考员 OIDC token 端点非 200:{Status}", status);
                 return new Result(false, "token_endpoint_error", null);
             }
             using JsonDocument doc = JsonDocument.Parse(body);
@@ -91,7 +90,7 @@ public sealed class AdminOidcFlow
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "监考员 OIDC token 交换失败");
+            _log.LogWarning(ex, "监考员 OIDC token 交换失败(已重试)");
             return new Result(false, "token_exchange_failed", null);
         }
         if (string.IsNullOrEmpty(idToken)) return new Result(false, "no_id_token", null);
