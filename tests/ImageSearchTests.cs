@@ -7,6 +7,8 @@ using Horus.Server.Analysis.Search;
 using Horus.Server.Data;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace Horus.Server.Tests;
@@ -93,6 +95,25 @@ public class EmbeddingParseTests
     {
         Assert.Null(OpenAiImageEmbedder.ParseEmbedding("not json"));
         Assert.Null(OpenAiImageEmbedder.ParseEmbedding("{\"data\":[]}"));
+    }
+}
+
+/// M3 本地 ONNX CLIP 预处理:图像 → CHW 张量 + CLIP 归一化(纯像素·可测·不碰 ONNX 运行时)。
+public class ClipPreprocessTests
+{
+    [Fact]
+    public void 纯红图_张量维度与CLIP归一化正确()
+    {
+        byte[] png;
+        using (var img = new Image<Rgb24>(300, 200, new Rgb24(255, 0, 0)))
+        using (var ms = new MemoryStream()) { img.SaveAsPng(ms); png = ms.ToArray(); }
+
+        float[] t = ClipPreprocess.ToTensor(png);
+        Assert.Equal(3 * 224 * 224, t.Length);       // CHW 224²
+        int plane = 224 * 224;
+        Assert.Equal((1f - 0.48145466f) / 0.26862954f, t[0], 3);          // R 通道归一化
+        Assert.Equal((0f - 0.4578275f) / 0.26130258f, t[plane], 3);       // G
+        Assert.Equal((0f - 0.40821073f) / 0.27577711f, t[2 * plane], 3);  // B
     }
 }
 

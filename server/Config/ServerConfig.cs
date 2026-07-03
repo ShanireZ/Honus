@@ -123,6 +123,12 @@ public sealed record ServerConfig
     public int EmbedDim { get; init; } = 512;
     /// 后台嵌入补扫间隔(分钟):拾回证据/可疑图里尚无 embedding 的。默认 5;≤0=关闭。
     public double EmbedBackstopMinutes { get; init; } = 5;
+    /// 本地 ONNX CLIP 图像编码器模型路径(embedProvider=onnx 必配)。相对 DataDir 或绝对路径。
+    public string? EmbedOnnxModelPath { get; init; }
+    /// ONNX 输入张量名(留空=模型第一个输入·CLIP 常为 pixel_values)。
+    public string? EmbedOnnxInput { get; init; }
+    /// ONNX 输出张量名(留空=模型第一个输出·常为 image_embeds / output)。
+    public string? EmbedOnnxOutput { get; init; }
 
     [JsonIgnore]
     public bool EmbedEnabled => !string.IsNullOrWhiteSpace(EmbedProvider)

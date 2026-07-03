@@ -82,13 +82,21 @@
   //   visionMaxEdge: 送云图长边像素上限(降采样省 token·顺带剥离 EXIF/XMP/ICC 元数据)。默认 1600;0=不降采样直通。原图永不出网,只送派生图。
   "visionMaxEdge": 1600,
   // ---- M3 CLIP 按图搜图(provider-agnostic 嵌入器·C# 暴力余弦·无需 sqlite-vec·仅嵌证据图)----
-  // embedProvider: 留空/"off"=关(默认) | "mock"(确定性·测试) | "openai"(OpenAI 兼容 /v1/embeddings)。
+  // embedProvider: 留空/"off"=关(默认) | "mock"(确定性·测试) | "onnx"(本地 CLIP ONNX·推荐·零出网) | "openai"(OpenAI 兼容 /v1/embeddings)。
+  //   ★探测过:小米 MiMo-V2.5 **无** /v1/embeddings 端点(仅对话/视觉/ASR/TTS)→ 复用视觉 key 走不通,故用本地 onnx。
+  //   部署前可 `Horus.Server probe-embed [model]` 探测某云端点是否有图像 embedding 模型。
   "embedProvider": "",
-  // embedBaseUrl: 留空则复用 visionBaseUrl(KEY一致·同 provider);/embeddings 从此拼。⚠️端点须有图像/多模态 embedding 模型。
+  // --- provider=onnx(本地 CLIP·推荐)---
+  // embedOnnxModelPath: CLIP ViT-B/32 **图像编码器** ONNX(512 维)路径(相对 dataDir 或绝对)。
+  //   获取:HuggingFace `Xenova/clip-vit-base-patch32` 的 onnx/vision_model.onnx;或用 optimum 从 openai/clip-vit-base-patch32 导出。
+  "embedOnnxModelPath": "",
+  // embedOnnxInput / embedOnnxOutput: 张量名(留空=模型首个输入/输出;CLIP 常为 pixel_values / image_embeds)。
+  "embedOnnxInput": "",
+  "embedOnnxOutput": "",
+  // --- provider=openai(云·仅当有图像/多模态 embedding 端点时)---
+  // embedBaseUrl: 留空则复用 visionBaseUrl(KEY一致);/embeddings 从此拼。embedModel/embedApiKey(留空复用视觉 key·env HORUS_EMBED_KEY)。
   "embedBaseUrl": "",
-  // embedModel: 嵌入模型名(供应商的图像/多模态 embedding 模型)。provider=openai 必配。
   "embedModel": "",
-  // embedApiKey: 留空则复用视觉 key(KEY一致);生产可用 embedApiKeyEnc(DPAPI) 或 env HORUS_EMBED_KEY。
   "embedApiKey": "",
   // embedDim: 嵌入维度(暴力余弦无所谓·仅记录)。默认 512(CLIP ViT-B/32)。
   "embedDim": 512,

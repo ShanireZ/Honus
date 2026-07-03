@@ -17,6 +17,8 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <!-- §5 收口:送云视觉 LLM 前对截图 decode/裁剪/打码身份/降采样再 re-encode(与 Agent 同版,WebP 互通)。 -->
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <!-- M3 按图搜图:本地 ONNX CLIP 图像编码器推理(CPU·无需 GPU)。仅 embedProvider=onnx 时加载模型;Mock/关时不触发。 -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
   </ItemGroup>
 
   <ItemGroup>

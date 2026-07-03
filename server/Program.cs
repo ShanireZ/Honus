@@ -74,6 +74,42 @@ cfg = cfg with
     OidcDashboardRedirectUri = Environment.GetEnvironmentVariable("HORUS_OIDC_DASHBOARD_REDIRECT") ?? cfg.OidcDashboardRedirectUri,
 };
 
+// ---- 诊断:`Horus.Server probe-embed [model]` —— 复用视觉 key 探测 embeddings 端点(部署前验证按图搜图可用性,不落库不起服务) ----
+if (args.Contains("probe-embed"))
+{
+    string baseUrl = (cfg.EmbedBaseUrlEffective ?? "").TrimEnd('/');
+    string key = SecretProtect.Resolve(cfg);   // 复用视觉 key(env>enc(DPAPI)>明文)
+    int mi = Array.IndexOf(args, "probe-embed");
+    string model = mi + 1 < args.Length ? args[mi + 1] : (cfg.EmbedModel ?? cfg.VisionModel ?? "");
+    static string Trunc(string s, int n) => s.Length <= n ? s : s[..n] + "…";
+    Console.WriteLine($"[probe-embed] baseUrl={baseUrl} model={model} keyLen={key.Length}");
+    using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    if (!string.IsNullOrEmpty(key)) probe.DefaultRequestHeaders.Add("Authorization", "Bearer " + key);
+    try
+    {
+        using var mr = await probe.GetAsync(baseUrl + "/models");
+        Console.WriteLine($"[probe-embed] GET /models → {(int)mr.StatusCode}: {Trunc(await mr.Content.ReadAsStringAsync(), 1000)}");
+    }
+    catch (Exception ex) { Console.WriteLine($"[probe-embed] GET /models 失败: {ex.Message}"); }
+    // 生成一张 64×64 小图 → webp → data URI(探测图像 embedding)
+    byte[] img;
+    using (var im = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(64, 64,
+               new SixLabors.ImageSharp.PixelFormats.Rgba32(200, 40, 40, 255)))
+    using (var ms = new MemoryStream()) { im.Save(ms, new SixLabors.ImageSharp.Formats.Webp.WebpEncoder()); img = ms.ToArray(); }
+    string dataUri = "data:image/webp;base64," + Convert.ToBase64String(img);
+    string reqJson = System.Text.Json.JsonSerializer.Serialize(new { model, input = new[] { dataUri } });
+    try
+    {
+        using var er = await probe.PostAsync(baseUrl + "/embeddings", new StringContent(reqJson, System.Text.Encoding.UTF8, "application/json"));
+        string eb = await er.Content.ReadAsStringAsync();
+        float[]? v = Horus.Server.Analysis.Search.OpenAiImageEmbedder.ParseEmbedding(eb);
+        Console.WriteLine($"[probe-embed] POST /embeddings(图像) → {(int)er.StatusCode}: {Trunc(eb, 1500)}");
+        Console.WriteLine(v is not null ? $"[probe-embed] ✅ 解析出向量维度={v.Length}(图像 embedding 可用)" : "[probe-embed] ❌ 未解析出 embedding 向量(端点无图像 embedding 模型?)");
+    }
+    catch (Exception ex) { Console.WriteLine($"[probe-embed] POST /embeddings 失败: {ex.Message}"); }
+    return;
+}
+
 // ---- 解析数据目录与 DB 数据源 ----
 string dataDir = Path.GetFullPath(cfg.DataDir);
 Directory.CreateDirectory(dataDir);
@@ -157,6 +193,17 @@ if (cfg.EmbedEnabled)
             new Horus.Server.Analysis.Search.OpenAiImageEmbedder(
                 new HttpClient { Timeout = TimeSpan.FromSeconds(60) }, eEndpoint, eModel, eKey, cfg.EmbedDim, cfg,
                 sp.GetRequiredService<ILogger<Horus.Server.Analysis.Search.OpenAiImageEmbedder>>()));
+    }
+    else if (string.Equals(cfg.EmbedProvider, "onnx", StringComparison.OrdinalIgnoreCase))
+    {
+        // 本地 ONNX CLIP(MiMo 无 embeddings 端点·走本地·零出网)。模型部署提供。
+        string modelPath = cfg.EmbedOnnxModelPath ?? throw new InvalidOperationException("embedProvider=onnx 需配 embedOnnxModelPath");
+        string modelFull = Path.IsPathRooted(modelPath) ? modelPath : Path.Combine(dataDir, modelPath);
+        if (!File.Exists(modelFull)) throw new InvalidOperationException($"ONNX CLIP 模型不存在:{modelFull}(embedOnnxModelPath)");
+        builder.Services.AddSingleton<Horus.Server.Analysis.Search.IImageEmbedder>(sp =>
+            new Horus.Server.Analysis.Search.OnnxClipEmbedder(
+                modelFull, cfg.EmbedOnnxInput, cfg.EmbedOnnxOutput, cfg.EmbedDim,
+                sp.GetRequiredService<ILogger<Horus.Server.Analysis.Search.OnnxClipEmbedder>>()));
     }
     else
         builder.Services.AddSingleton<Horus.Server.Analysis.Search.IImageEmbedder>(new Horus.Server.Analysis.Search.MockImageEmbedder(cfg.EmbedDim));
