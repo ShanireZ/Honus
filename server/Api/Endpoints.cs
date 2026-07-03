@@ -4,6 +4,7 @@ using Horus.Contracts;
 using Horus.Server.Analysis;
 using Horus.Server.Config;
 using Horus.Server.Data;
+using Horus.Server.Identity;
 using Horus.Server.Ingest;
 using Horus.Server.Jobs;
 using Microsoft.Data.Sqlite;
@@ -23,12 +24,16 @@ public static class Endpoints
         ServerConfig cfg = app.Services.GetRequiredService<ServerConfig>();
         AgentHub hub = app.Services.GetRequiredService<AgentHub>();
         ArchiveService archive = app.Services.GetRequiredService<ArchiveService>();
+        AdminSessionStore adminSessions = app.Services.GetRequiredService<AdminSessionStore>();   // M4·RBAC 登出销毁
 
         // ---- 登录:校验令牌 → 下发 HttpOnly cookie(免受 admin gate;否则拿不到 cookie 就进不来) ----
         // cookie 值 = 管理令牌;JS 读不到(HttpOnly),SameSite=Strict 防 CSRF。gate 用 FixedTimeEquals 比对。
         app.MapPost("/api/login", async (HttpContext ctx) =>
         {
             if (!cfg.AdminAuthEnabled) return Results.Json(new { ok = true, authRequired = false });
+            // M4·RBAC(R3):oidc 模式下静态令牌登录退役,监考员走 cpplearn OIDC(/admin/login),无令牌后门。
+            if (cfg.DashboardOidcEnabled)
+                return Results.Json(new { ok = false, error = "use_oidc_login", loginUrl = "/admin/login" }, statusCode: 400);
             JsonNode? body;
             try { body = await JsonNode.ParseAsync(ctx.Request.Body); }
             catch (JsonException) { return Results.Json(new { ok = false, error = "bad_json" }, statusCode: 400); }
@@ -46,9 +51,114 @@ public static class Endpoints
             return Results.Json(new { ok = true, authRequired = true });
         });
 
-        // ---- 登出:清 cookie ----
+        // ---- 鉴权模式(公开·gate 豁免):前端据此决定登录门显示令牌输入还是 cpplearn OIDC 登录按钮 ----
+        app.MapGet("/api/authmode", () => Results.Json(new
+        {
+            mode = cfg.DashboardOidcEnabled ? "oidc" : "token",
+            authRequired = cfg.AdminAuthEnabled,
+            loginUrl = "/admin/login",
+        }));
+
+        // ---- 考前连通性 / 配置预检(admin 门内):监考员开考前一键自查,防 fail-closed 当天翻车。----
+        // 检查采集/管理端鉴权配置完整性、cpplearn issuer 可达(JWKS 拉取)、视觉 key、active 考试白名单覆盖(§10.1)。
+        app.MapGet("/api/preflight", async (HttpContext ctx) =>
+        {
+            var checks = new List<object>();
+            int fails = 0, warns = 0;
+            void Add(string id, string level, string label, string detail)
+            {
+                if (level == "fail") fails++; else if (level == "warn") warns++;
+                checks.Add(new { id, level, label, detail });
+            }
+
+            // 1) 采集面鉴权
+            if (cfg.OidcEnabled)
+                Add("collect_auth", string.IsNullOrEmpty(cfg.OidcIssuer) ? "fail" : "ok", "采集面 OIDC",
+                    string.IsNullOrEmpty(cfg.OidcIssuer) ? "authMode=oidc/both 但未配 oidcIssuer" : $"authMode={cfg.AuthMode} · issuer={cfg.OidcIssuer}");
+            else if (cfg.AuthEnabled) Add("collect_auth", "ok", "采集面 PSK", "authMode=psk(共享 PSK)");
+            else Add("collect_auth", "warn", "采集面鉴权", "未配 PSK / OIDC(仅联调)");
+
+            // 2) 管理端鉴权
+            if (cfg.DashboardOidcEnabled)
+            {
+                var missing = new List<string>();
+                if (string.IsNullOrEmpty(cfg.OidcDashboardClientId)) missing.Add("oidcDashboardClientId");
+                if (string.IsNullOrEmpty(cfg.OidcDashboardRedirectUri)) missing.Add("oidcDashboardRedirectUri");
+                try { if (string.IsNullOrEmpty(OidcSecret.ResolveDashboard(cfg))) missing.Add("dashboard secret"); }
+                catch (Exception ex) { missing.Add("dashboard secret(" + ex.Message + ")"); }
+                if (missing.Count > 0) Add("admin_auth", "fail", "监考员 OIDC", "adminAuthMode=oidc 但缺:" + string.Join(" / ", missing));
+                else Add("admin_auth", "ok", "监考员 OIDC", "dashboard client 已配 · redirect=" + cfg.OidcDashboardRedirectUri);
+                if (!string.IsNullOrEmpty(cfg.OidcDashboardRedirectUri)
+                    && !cfg.OidcDashboardRedirectUri!.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    Add("admin_redirect_https", "warn", "回调 HTTPS", "oidcDashboardRedirectUri 非 https,远端工作站将无法回调(须自签 https)");
+            }
+            else Add("admin_auth", "ok", "管理端令牌", "adminAuthMode=token(静态令牌·非 OIDC)");
+
+            // 3) cpplearn issuer 可达性(fail-closed 关键:oidc 下不可达 = 当天登录/换 token 失败)
+            if (cfg.OidcEnabled || cfg.DashboardOidcEnabled)
+            {
+                string jwksUrl = cfg.OidcIssuer!.TrimEnd('/') + "/.well-known/jwks.json";
+                bool inlineJwks = !string.IsNullOrWhiteSpace(cfg.OidcJwksJson);
+                try
+                {
+                    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    using HttpResponseMessage resp = await http.GetAsync(jwksUrl, ctx.RequestAborted);
+                    string body = await resp.Content.ReadAsStringAsync(ctx.RequestAborted);
+                    if (resp.IsSuccessStatusCode && body.Contains("\"keys\""))
+                        Add("issuer_reachable", "ok", "cpplearn 可达", "JWKS 拉取成功(" + jwksUrl + ")");
+                    else
+                        Add("issuer_reachable", "warn", "cpplearn 可达性", $"JWKS 端点响应异常({(int)resp.StatusCode})");
+                }
+                catch (Exception ex)
+                {
+                    Add("issuer_reachable", inlineJwks ? "warn" : "fail", "cpplearn 可达性",
+                        "无法拉取 JWKS:" + ex.Message + (inlineJwks
+                            ? "(已配内联 JWKS 可离线验签,但授权/换 token 仍需 issuer 可达)"
+                            : "(且未配内联 oidcJwksJson,验签也无兜底)"));
+                }
+            }
+
+            // 4) 视觉分析 key
+            if (cfg.VisionEnabled)
+            {
+                try
+                {
+                    string k = SecretProtect.Resolve(cfg);
+                    Add("vision", "ok", "视觉分析", $"provider={cfg.VisionProvider}" + (k.Length > 0 ? " · key 已解出" : " · key 为空(mock/本地?)"));
+                }
+                catch (Exception ex) { Add("vision", "warn", "视觉分析", "key 解密失败:" + ex.Message); }
+            }
+
+            // 5) active 考试白名单覆盖(§10.1 缺口)
+            List<(string id, string name)> actives = db.Read(conn =>
+            {
+                var l = new List<(string, string)>();
+                using SqliteCommand c = conn.Cmd("SELECT exam_id,name FROM exams WHERE status='active' ORDER BY created_at DESC");
+                using SqliteDataReader r = c.ExecuteReader();
+                while (r.Read()) l.Add((r.GetString(0), r.GetString(1)));
+                return l;
+            });
+            var activeExams = new List<object>();
+            int noWl = 0;
+            foreach ((string id, string name) e in actives)
+            {
+                bool hasWl = hub.GetPolicy(e.id).Hosts is not null;
+                if (!hasWl) noWl++;
+                activeExams.Add(new { examId = e.id, name = e.name, hasWhitelist = hasWl });
+            }
+            if (actives.Count == 0) Add("whitelist", "ok", "白名单覆盖", "当前无 active 考试");
+            else if (noWl > 0) Add("whitelist", "warn", "白名单覆盖",
+                $"{noWl}/{actives.Count} 个 active 考试未下发白名单 → 非黑名单站/进程 server_risk 退回靠 Agent 自报(§10.1 缺口)");
+            else Add("whitelist", "ok", "白名单覆盖", $"全部 {actives.Count} 个 active 考试已下发白名单");
+
+            return Results.Json(new { ok = fails == 0, fails, warns, checks, activeExams });
+        });
+
+        // ---- 登出:清 cookie(oidc 模式一并销毁服务器端管理会话)----
         app.MapPost("/api/logout", (HttpContext ctx) =>
         {
+            if (cfg.DashboardOidcEnabled)
+                adminSessions.Delete(ctx.Request.Cookies["horus_admin"] ?? "");
             ctx.Response.Cookies.Delete("horus_admin", new CookieOptions { Path = "/" });
             return Results.Json(new { ok = true });
         });
@@ -79,6 +189,8 @@ public static class Endpoints
                             ("@e", examId), ("@cut", cut)),
                         pendingSuspicious = Scalar(conn,
                             "SELECT COUNT(*) FROM suspicious_queue WHERE exam_id=@e AND status='pending'", ("@e", examId)),
+                        // §10.1:未下发白名单的 active 考试,服务器对非黑名单站/进程无独立判据(server_risk 退回靠 Agent 自报)。
+                        hasWhitelist = hub.GetPolicy(examId).Hosts is not null,
                     });
                 }
                 return Results.Json(list);
@@ -102,7 +214,9 @@ public static class Endpoints
                         (SELECT COALESCE(MAX(MAX(e.risk, COALESCE(e.server_risk,0))),0) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id AND e.ts>=@rc),
                         (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id),
                         (SELECT COUNT(*) FROM suspicious_queue q WHERE q.exam_id=s.exam_id AND q.seat_id=s.seat_id AND q.status='pending'),
-                        sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power, sess.user_type
+                        sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power, sess.user_type,
+                        (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id
+                           AND e.type IN ('watchdog_restart','suspected_suspend','screenshot_obscured','capability_degraded'))
                       FROM seats s
                       LEFT JOIN (SELECT exam_id, seat_id, sub, username, nickname, dao_name, avatar, realm, realm_level, combat_power, user_type, MAX(issued_at) AS mx
                                  FROM oidc_sessions GROUP BY exam_id, seat_id) sess
@@ -143,6 +257,8 @@ public static class Endpoints
                             // M4·RBAC:'elder'=监考员 / 'disciple'=考生(看板可据此标注/筛选身份)
                             userType = NullStr(r, 18),
                         },
+                        // M5 采集端硬化:该座位的健康告警数(异常重启/疑似挂起/遮屏/能力降级 事件计),看板据此标黄。
+                        healthAlerts = r.GetInt32(19),
                     });
                 }
                 return Results.Json(list);

@@ -129,7 +129,7 @@
   function handleUnauthorized() {
     stopPolling();
     clearCurrentData();
-    showLoginGate("令牌无效或已过期，请重新登录");
+    showLoginGate("登录已失效或过期，请重新登录");
   }
 
   function api(path, options) {
@@ -218,6 +218,7 @@
     $("#manualRefresh").addEventListener("click", function () {
       refreshCurrent();
     });
+    $("#preflightBtn").addEventListener("click", openPreflightDrawer);
     $("#autoRefresh").addEventListener("change", function (e) {
       state.autoRefresh = e.target.checked;
       restartPolling();
@@ -244,8 +245,33 @@
     $("#loginGate").hidden = false;
     var input = $("#tokenInput");
     input.value = "";
-    // 让输入框拿到焦点（延迟一帧，避开遮罩刚显示时的布局）
-    setTimeout(function () { try { input.focus(); } catch (e) {} }, 0);
+    // M4·RBAC：据后端鉴权方式切换令牌输入 / cpplearn OIDC 登录按钮；token 模式才聚焦输入框。
+    applyAuthMode().then(function (oidc) {
+      if (!oidc) setTimeout(function () { try { input.focus(); } catch (e) {} }, 0);
+    });
+  }
+
+  // M4·RBAC：探测管理鉴权方式（token / oidc），据此切换登录门 UI。返回 Promise<oidc:boolean>。
+  function applyAuthMode() {
+    return fetch("/api/authmode", { credentials: "same-origin", headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var oidc = !!(j && j.mode === "oidc");
+        var form = $("#loginForm"), btn = $("#oidcLoginBtn");
+        var title = $("#loginTitle"), hint = $("#loginHint");
+        if (oidc) {
+          if (form) form.hidden = true;
+          if (btn) { btn.hidden = false; btn.href = j.loginUrl || "/admin/login"; }
+          if (title) title.textContent = "监考员登录";
+          if (hint && !hint.classList.contains("is-error"))
+            hint.textContent = "用 cpplearn 账号登录，仅长老（监考员）可进入监考看板。";
+        } else {
+          if (form) form.hidden = false;
+          if (btn) btn.hidden = true;
+        }
+        return oidc;
+      })
+      .catch(function () { return false; });   // 探测失败 → 保留默认令牌门
   }
   function hideLoginGate() {
     $("#loginGate").hidden = true;
@@ -511,16 +537,22 @@
         "\n机器: " + dash(s.machineId) +
         "\n最后心跳: " + fmtTime(s.lastHeartbeatTs) +
         "\n事件数: " + dash(s.eventCount) +
-        "\n最近风险: " + dash(s.maxRecentRisk);
+        "\n最近风险: " + dash(s.maxRecentRisk) +
+        ((s.healthAlerts || 0) > 0 ? "\n采集健康告警: " + s.healthAlerts + "(异常重启/挂起/遮屏/降权)" : "");
 
       var badge = "";
       if ((s.suspiciousCount || 0) > 0) {
         badge = '<span class="seat__badge">' + s.suspiciousCount + "</span>";
       }
       var offlineTag = s.online ? "" : '<span class="seat__offline-tag">离线</span>';
+      // M5：采集健康告警标(异常重启/疑似挂起/遮屏/能力降级),提示监考员该座位采集可能被削弱。
+      var healthTag = (s.healthAlerts || 0) > 0
+        ? '<span title="采集健康告警" style="position:absolute;top:.3rem;left:.3rem;background:#f9e2af;color:#1e1e2e;'
+          + 'font-size:.7rem;font-weight:700;border-radius:.4rem;padding:.05rem .3rem">⚠' + s.healthAlerts + '</span>'
+        : "";
 
       el.innerHTML =
-        badge + offlineTag +
+        badge + offlineTag + healthTag +
         '<span class="seat__id">' + esc(s.seatId) + "</span>" +
         '<span class="seat__name">' + esc(dash(s.displayName)) + "</span>" +
         '<span class="seat__meta">风险 ' + dash(s.maxRecentRisk) +
@@ -593,6 +625,32 @@
     $("#drawer").setAttribute("aria-hidden", "true");
     $("#drawerScrim").hidden = true;
     state.drawerMode = null;
+  }
+
+  /* ---------- 考前预检（M4 部署项）---------- */
+  function openPreflightDrawer() {
+    openDrawer("preflight", "考前预检");
+    var body = $("#drawerBody");
+    body.innerHTML = '<div class="loading">预检中…</div>';
+    apiGet("/api/preflight").then(function (pf) {
+      if (state.drawerMode !== "preflight") return;
+      var checks = Array.isArray(pf.checks) ? pf.checks : [];
+      var rows = checks.map(function (c) {
+        var color = c.level === "fail" ? "#f38ba8" : (c.level === "warn" ? "#f9e2af" : "#a6e3a1");
+        var tag = c.level === "fail" ? "✕" : (c.level === "warn" ? "!" : "✓");
+        return '<div style="display:flex;gap:.6rem;padding:.55rem 0;border-bottom:1px solid rgba(255,255,255,.06)">' +
+          '<span style="color:' + color + ';font-weight:700;min-width:1.2rem;text-align:center">' + tag + '</span>' +
+          '<div><div style="font-weight:600">' + esc(c.label || c.id) + '</div>' +
+          '<div style="color:#9aa0aa;font-size:.85em;margin-top:.15rem">' + esc(c.detail || "") + '</div></div></div>';
+      }).join("");
+      var summary = pf.ok
+        ? '<div style="color:#a6e3a1;font-weight:600">✓ 预检通过' + (pf.warns ? '（' + pf.warns + ' 项提醒，可开考）' : '，可开考') + '</div>'
+        : '<div style="color:#f38ba8;font-weight:600">✕ 有 ' + pf.fails + ' 项须修复才能开考</div>';
+      body.innerHTML = '<div style="margin-bottom:.9rem;font-size:1.05em">' + summary + '</div>' + rows;
+    }).catch(function (err) {
+      if (err && err.isAuth) return;
+      body.innerHTML = '<div class="loading">预检失败：' + esc(err.message || "未知错误") + '</div>';
+    });
   }
 
   /* ---------- 可疑详情 ---------- */
@@ -716,11 +774,26 @@
     openDrawer("seat", "座位详情 · " + (s.seatId || ""));
     var body = $("#drawerBody");
 
+    // M4·RBAC：OIDC 登录的 cpplearn 身份画像（未登录/PSK 模式 s.identity 为 null，不渲染这些行）。
+    var id = s.identity;
+    var idRows = id ? (
+        "<dt>身份</dt><dd>" + (id.userType === "elder"
+          ? "<span class='mono'>监考员（长老）</span>"
+          : "<span class='mono'>参考学员（弟子）</span>") + "</dd>" +
+        "<dt>账号</dt><dd>" + esc(dash(id.username)) + "</dd>" +
+        (id.nickname ? "<dt>昵称</dt><dd>" + esc(id.nickname) + "</dd>" : "") +
+        (id.daoName ? "<dt>道号</dt><dd>" + esc(id.daoName) + "</dd>" : "") +
+        (id.realm ? "<dt>境界</dt><dd>" + esc(id.realm) +
+          (id.realmLevel ? " · " + esc(String(id.realmLevel)) + " 层" : "") + "</dd>" : "") +
+        "<dt>战力</dt><dd class='mono'>" + dash(id.combatPower) + "</dd>"
+      ) : "";
+
     body.innerHTML =
       '<dl class="dl">' +
         "<dt>座位</dt><dd class='mono'>" + esc(dash(s.seatId)) + "</dd>" +
         "<dt>姓名</dt><dd>" + esc(dash(s.displayName)) + "</dd>" +
         "<dt>学号</dt><dd class='mono'>" + esc(dash(s.studentId)) + "</dd>" +
+        idRows +
         "<dt>Agent</dt><dd class='mono'>" + esc(dash(s.agentId)) + "</dd>" +
         "<dt>机器</dt><dd class='mono'>" + esc(dash(s.machineId)) + "</dd>" +
         "<dt>在线</dt><dd>" + (s.online ? "在线" : "离线") + "</dd>" +
@@ -729,6 +802,9 @@
         "<dt>最近风险</dt><dd class='mono'>" + dash(s.maxRecentRisk) + "</dd>" +
         "<dt>事件数</dt><dd class='mono'>" + dash(s.eventCount) + "</dd>" +
         "<dt>可疑数</dt><dd class='mono'>" + dash(s.suspiciousCount) + "</dd>" +
+        ((s.healthAlerts || 0) > 0
+          ? "<dt>采集健康</dt><dd style='color:#f9e2af'>⚠ " + s.healthAlerts + " 告警（见下方时间线：异常重启/挂起/遮屏/降权）</dd>"
+          : "") +
       "</dl>" +
       '<div class="section-title">事件时间线</div>' +
       '<div class="loading" id="tlLoading">加载事件中…</div>' +

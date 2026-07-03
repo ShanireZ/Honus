@@ -27,7 +27,7 @@ agent/                     C#/.NET 采集端骨架(Horus.Agent)
 ```
 
 ## 状态
-**M1–M4 已实现并端到端验证(144 项测试全绿)**:M1 采集/握手/续传/断线重连 + ingest 落库/幂等/看板/人工裁决;M2 视觉 LLM 识图(取代 OCR+Logo·小米 MiMo-V2.5)+ 服务器侧 `server_risk` 复判 + 击键 KSK 会话签名 + admin HttpOnly cookie + DB 读写分离;M3 哈希链完整性复验(ingest `bad_hash` 拒收 + 离线审计)+ 归档/清理作业;**M4 身份层 cpplearn OIDC 取代共享 PSK**(Agent 经 cpplearn 授权码+PKCE 登录 → ECDH 会话密钥签名 → 闭合 A1 跨身份栽赃 + A2 seq 抢占·见 [docs/m4-identity-oidc.md](docs/m4-identity-oidc.md))。**进行中(M4·RBAC)**:cpplearn 角色映射——`user_type='elder'`(长老)=监考员/管理端权限,`'disciple'`(弟子)=参考学员(考生);OIDC 身份取代看板死令牌。**待做**:CLIP 按图搜图(需 sqlite-vec + CLIP ONNX)、击键前端埋点(判题网页·本仓外)、Agent 防卸载 / 多服务器。里程碑见 [docs/architecture-v0.2.md](docs/architecture-v0.2.md) §15。
+**M1–M4 已实现并端到端验证(158 项测试全绿)**:M1 采集/握手/续传/断线重连 + ingest 落库/幂等/看板/人工裁决;M2 视觉 LLM 识图(取代 OCR+Logo·小米 MiMo-V2.5·基线图确定性 1/N 抽样控云成本)+ 服务器侧 `server_risk` 复判 + 击键 KSK 会话签名 + admin HttpOnly cookie + DB 读写分离;M3 哈希链完整性复验(ingest `bad_hash` 拒收 + 离线审计)+ 归档/清理作业;**M4 身份层 cpplearn OIDC 取代共享 PSK**(Agent 经 cpplearn 授权码+PKCE 登录 → ECDH 会话密钥签名 → 闭合 A1 跨身份栽赃 + A2 seq 抢占)+ **RBAC 角色映射**(`user_type='elder'`=监考员/看板管理端权限,`'disciple'`=参考学员(考生);监考员用 cpplearn OIDC 登录看板取代静态令牌·远端工作站经自签 https·真机 smoke 通过·见 [docs/m4-identity-oidc.md](docs/m4-identity-oidc.md) §10)+ **考前预检**(`/api/preflight` + 看板「预检」按钮:鉴权配置 / cpplearn 可达 / active 考试白名单覆盖一键自查)。**待做**:CLIP 按图搜图(需 sqlite-vec + CLIP ONNX)、击键前端埋点(判题网页·本仓外)、Agent 防卸载 / 多服务器。里程碑见 [docs/architecture-v0.2.md](docs/architecture-v0.2.md) §15。
 
 ## 关键设计取舍
 - **预防层为零**:不控考场网络、不做主机防火墙 → 浏览器 URL 监控是第一防线,只能事后取证、不可阻断。

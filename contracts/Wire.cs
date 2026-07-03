@@ -15,6 +15,11 @@ public enum SignalType
     Usb,
     Screenshot,
     Heartbeat,
+    // M5 采集端硬化健康信号(Agent 自检上报·纯检测:让规避暴露,不阻断)。序列化 snake_case。
+    WatchdogRestart,      // 采集进程被结束后由看门狗拉起,重启上报(关采集的取证)
+    SuspectedSuspend,     // 采集循环 wall-clock 跳变超阈值(被 suspend / 睡眠 / 锁屏)
+    ScreenshotObscured,   // 截图纯色 / 低熵 / 尺寸异常(黑屏 / 遮挡 / DRM 保护窗口)
+    CapabilityDegraded,   // 非管理员 / 某信号源(ETW/UIA/WMI)持续失败
 }
 
 /// 上报事件(封装后含哈希链字段)。字段顺序与 api-contract §0.1 canonical 一致。

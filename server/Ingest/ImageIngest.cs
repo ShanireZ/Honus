@@ -127,6 +127,12 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, Vision
         string relPath = await storage.SaveWebpAsync(examId, seatId, imageId, body);
         double recvTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
+        // §5 视觉分析判据:触发型必送;随机基线仅当开了基线分析**且命中抽样**(1/N·确定性按 imageId)才送。
+        bool isEvent = trigger.StartsWith("event:", StringComparison.Ordinal);
+        bool analyze = vision.Enabled && (isEvent || (cfg.VisionAnalyzeBaseline && BaselineSampleHit(imageId, cfg.VisionBaselineSampleRate)));
+        // 开了基线分析但本张未抽中 → 落库即标 analysis_state=1 终结,补偿重扫不再拾回(否则每轮重扫都会翻检未抽中基线)。
+        bool baselineSampledOut = vision.Enabled && !isEvent && cfg.VisionAnalyzeBaseline && !analyze;
+
         bool sealedInLock = db.Locked(conn =>
         {
             // late-ingest 隔离:上方 :70 的 sealed 预检在**只读连接**(快速拒绝),此处在**写锁事务内**权威复检——
@@ -135,12 +141,12 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, Vision
             if (conn.IsExamSealed(examId)) return true;
 
             using (SqliteCommand c = conn.Cmd(
-                @"INSERT INTO images (image_id,exam_id,seat_id,agent_id,ts,recv_ts,trigger,phash,file_path,format,bytes,uploaded_to_ocr,is_evidence)
-                  VALUES (@id,@e,@s,@a,@ts,@recv,@trig,@ph,@fp,'webp',@bytes,0,0)
+                @"INSERT INTO images (image_id,exam_id,seat_id,agent_id,ts,recv_ts,trigger,phash,file_path,format,bytes,uploaded_to_ocr,is_evidence,analysis_state)
+                  VALUES (@id,@e,@s,@a,@ts,@recv,@trig,@ph,@fp,'webp',@bytes,0,0,@astate)
                   ON CONFLICT(image_id) DO NOTHING",
                 ("@id", imageId), ("@e", examId), ("@s", seatId), ("@a", agentId),
                 ("@ts", ts), ("@recv", recvTs), ("@trig", trigger), ("@ph", phash),
-                ("@fp", relPath), ("@bytes", (long)body.Length)))
+                ("@fp", relPath), ("@bytes", (long)body.Length), ("@astate", baselineSampledOut ? 1 : 0)))
                 c.ExecuteNonQuery();
 
             // 反向补标:仅触发型抓图(有客户端 id)才可能被事件引用;baseline 图跳过,免每张全表查 events。
@@ -161,12 +167,20 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, Vision
             return;
         }
 
-        // 送异步视觉分析(§5 最小化:触发型必送;随机基线按配置抽样)。视觉关时 no-op、不占本请求延迟。
-        bool ocrQueued = vision.Enabled
-            && (trigger.StartsWith("event:", StringComparison.Ordinal) || cfg.VisionAnalyzeBaseline);
-        if (ocrQueued) vision.Enqueue(imageId);
+        // 送异步视觉分析(§5 最小化:触发型必送;随机基线按抽样)。视觉关时 no-op、不占本请求延迟。
+        if (analyze) vision.Enqueue(imageId);
 
-        await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued });
+        await ctx.Response.WriteAsJsonAsync(new { stored = true, imageId, duplicate = false, ocrQueued = analyze });
+    }
+
+    /// 基线抽样命中判据:1/N 确定性抽样(N≤1 恒真=全分析)。用**稳定 FNV-1a 哈希**(非 string.GetHashCode·
+    /// 后者进程内随机化,重启后同一图抽样结果会翻转 → 补偿重扫与入队判据不一致)保证跨重启一致。
+    internal static bool BaselineSampleHit(string imageId, int sampleRate)
+    {
+        if (sampleRate <= 1) return true;
+        uint h = 2166136261u;
+        foreach (char ch in imageId) { h ^= ch; h *= 16777619u; }
+        return h % (uint)sampleRate == 0;
     }
 
     /// 客户端 id 格式校验(防路径注入):img_ + 至多 64 位字母数字。

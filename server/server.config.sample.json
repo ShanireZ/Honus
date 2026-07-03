@@ -32,6 +32,20 @@
   "oidcJwksJson": "",
   // OIDC 会话有效期(分钟):派发的采集凭证寿命,建议 ≥ 考试时长。默认 180。
   "oidcSessionMinutes": 180,
+  // ---- M4·RBAC:监考员看板 OIDC 登录(cpplearn dashboard web client·取代静态 adminToken·见 §10)----
+  // adminAuthMode: "token"(默认·静态 adminToken) | "oidc"(仅 cpplearn 长老 OIDC·R3 无令牌后门·监考员走 /admin/login)。
+  "adminAuthMode": "token",
+  // cpplearn dashboard web client_id(与 cpplearn OAUTH_HORUS_DASHBOARD_CLIENT_ID 一致)。adminAuthMode=oidc 必配。
+  "oidcDashboardClientId": "horus-dashboard",
+  // dashboard client_secret 明文(仅联调;生产用 oidcDashboardClientSecretEnc DPAPI 或 env HORUS_OIDC_DASHBOARD_SECRET)。
+  "oidcDashboardClientSecret": "",
+  // dashboard 回调 URI:须与 cpplearn OAUTH_HORUS_DASHBOARD_REDIRECT_URIS 一条精确一致(如 https://<服务器>/cb)。
+  "oidcDashboardRedirectUri": "",
+  // 管理会话有效期(分钟):监考员登录后凭证寿命,建议 ≥ 考试时长。默认 180。
+  "adminSessionMinutes": 180,
+  // ---- HTTPS(远端监考工作站 OIDC 回调须 https;自签证书启动生成)。Urls 含 https 时生效 ----
+  // 额外 SAN 主机/IP(逗号分隔):填服务器 LAN IP / 主机名,监考机才能验通证书(localhost/127.0.0.1 自动含)。
+  "httpsSanHosts": "",
   "riskThreshold": 50,
   "dedupImagesByPhash": true,
   "onlineWindowSeconds": 90,
@@ -58,6 +72,8 @@
   "visionApiKeyEnc": "",
   "visionConfidenceThreshold": 60,
   "visionAnalyzeBaseline": false,
+  // 基线分析抽样率 N:visionAnalyzeBaseline=true 时只分析 1/N 的随机基线图(确定性按 imageId·跨重启一致·控云成本)。默认 1=全分析;设 10≈分析 10%。
+  "visionBaselineSampleRate": 1,
   // 补偿重扫间隔(分钟):周期性拾回被队列丢弃/重启丢内存队列/临时云失败的未分析触发型证据图。默认 5;≤0=关闭。
   "visionBackstopMinutes": 5,
   // 单张图视觉分析最大认领次数(含失败):临时云失败由补偿重扫重试,达此上限放弃防死循环。默认 5。

@@ -285,6 +285,11 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
         "usb" => SignalType.Usb,
         "screenshot" => SignalType.Screenshot,
         "heartbeat" => SignalType.Heartbeat,
+        // M5 采集端硬化健康信号
+        "watchdog_restart" => SignalType.WatchdogRestart,
+        "suspected_suspend" => SignalType.SuspectedSuspend,
+        "screenshot_obscured" => SignalType.ScreenshotObscured,
+        "capability_degraded" => SignalType.CapabilityDegraded,
         _ => SignalType.WindowFocus,
     };
 }

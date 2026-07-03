@@ -31,6 +31,10 @@ public static class Suspicion
             case SignalType.ProcessStart: return "non_whitelist_proc";
             case SignalType.Clipboard:    return "large_paste";
             case SignalType.Usb:          return "usb";
+            // M5 采集端硬化:入队的健康信号给专属 kind(看板可辨识)。
+            case SignalType.ScreenshotObscured: return "screen_obscured";
+            case SignalType.CapabilityDegraded: return "capability_degraded";
+            case SignalType.WatchdogRestart:    return "watchdog_restart";
             default:                      return "suspect";
         }
     }

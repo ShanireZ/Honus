@@ -99,7 +99,15 @@ if (lanExposed && !cfg.AllowInsecure && (collectInsecure || !cfg.AdminAuthEnable
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(urls);
-builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 2 * 1024 * 1024);   // 图片体上限 2MB(1080p webp~150KB),防放大 DoS
+// M4·RBAC·S8:Urls 含 https 时(监考员远端 OIDC 回调需 https)自签证书;仅 Kestrel 真跑时生效(测试走 TestServer 不触发)。
+bool httpsBound = urls.Any(u => u.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+System.Security.Cryptography.X509Certificates.X509Certificate2? httpsCert =
+    httpsBound ? HttpsCert.LoadOrCreate(cfg, dataDir) : null;
+builder.WebHost.ConfigureKestrel(o =>
+{
+    o.Limits.MaxRequestBodySize = 2 * 1024 * 1024;   // 图片体上限 2MB(1080p webp~150KB),防放大 DoS
+    if (httpsCert is not null) o.ConfigureHttpsDefaults(h => h.ServerCertificate = httpsCert);
+});
 
 builder.Services.AddSingleton(cfg);
 builder.Services.AddSingleton(new Db(dataSource));
@@ -202,7 +210,8 @@ if (cfg.AdminAuthEnabled)
     app.Use(async (ctx, next) =>
     {
         PathString p = ctx.Request.Path;
-        bool exempt = p.StartsWithSegments("/api/login") || p.StartsWithSegments("/api/logout");
+        bool exempt = p.StartsWithSegments("/api/login") || p.StartsWithSegments("/api/logout")
+                      || p.StartsWithSegments("/api/authmode");   // 公开:前端探测 token/oidc 登录方式
         if (p.StartsWithSegments("/api") && !exempt)
         {
             bool ok;

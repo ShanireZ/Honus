@@ -1,7 +1,7 @@
 # M4 身份层 —— cpplearn OIDC 接入 · 取代共享 PSK（设计与任务计划）
 
 - 项目：**Horus** 局域网考试监考系统 · 里程碑：**M4 身份层（健壮性/信任模型）**
-- 日期：2026-07-02 · 状态：**设计已定案（owner 拍板），待实现**
+- 日期：2026-07-02（RBAC 增补 2026-07-03）· 状态：**采集面 OIDC + RBAC(S8/S9) 均已实现·151 测试全绿·真机 https smoke 通过**（cpplearn 两批改动待 owner commit）
 - 关联：[architecture-v0.2.md §10.1](architecture-v0.2.md)（事件通道跨身份栽赃残留）· [api-contract-m1.md](api-contract-m1.md)
 - 依据：对 `Cpplearn`（OIDC provider）与 `Round1`（OIDC 客户端样板）的只读调研（见文末《调研证据》）
 
@@ -212,7 +212,7 @@ M4 的 OIDC 只把身份用在**采集面防栽赃**（A1/A2）；身份的**授
 
 > **fail-closed 取舍（诚实标注·owner 已知选此）**：R3 下若考试当天 cpplearn 不可达 → 无法签发/验证长老身份 → **管理端无令牌兜底、进不去**。缓解：**考前监考员先登录**（会话有效期 = 考试时长，登录后不再依赖 cpplearn）+ 考前连通性预检。若日后需应急后门，另行拍板（当前明确不留）。
 
-### 10.2 已实现（本批·加性·144 测试全绿·0 警告）
+### 10.2 已实现·第一批（角色载体·加性·0 警告）
 
 **cpplearn 侧（`Cpplearn` 仓·未 commit·65 套/266 用例全绿·生产/Round1 零影响）**：
 - `server/oidc/claims.js`：`HORUS_PROFILE_CLAIMS` 加 `user_type`；`buildHorusProfileClaims` 输出 `user_type`（空/非法回落 `disciple`）。
@@ -226,18 +226,26 @@ M4 的 OIDC 只把身份用在**采集面防栽赃**（A1/A2）；身份的**授
 - `/oidc/exchange` profile 与 `/api/exams/{id}/seats` 的 `identity` 均带 `userType`（看板可据此标注/筛选）。
 - 新增回归：`user_type` 提取 / 缺省考生 / 未知值归一化为考生。
 
-### 10.3 待实现（下一步·设计已定案 owner 2026-07-02）
+### 10.3 已实现·第二批 S8/S9（监考员 OIDC 登录 + 管理端授权·**151 测试全绿·真机 https smoke 通过**）
 
 **R5 拓扑（owner 拍板：本机 + 远端 LAN 监考工作站都要支持）**：因 cpplearn horus client 是 `native+loopback`（仅 `127.0.0.1` 回调）、远端工作站浏览器的 loopback 回不到服务器，故**监考服务器启用自签名 HTTPS** + cpplearn **新增第二个 `horus-dashboard` web client**（confidential·`redirect=https://<服务器>/cb`·authorization_code+PKCE·scope `openid horus_profile`）。远端/本机浏览器均经 https 直达服务器 `/cb`，走**标准服务器端授权码流**，无需每台装助手。**Agent 仍用原 native+loopback client 不变**。
 
-- **S8 监考员看板 OIDC 登录 + 管理端授权改造（OIDC 取代静态令牌·R3）**：
-  - **端点**：`GET /admin/login`（生成 state+nonce+PKCE·存 pending·重定向浏览器到 cpplearn `/authorize`）；`GET /cb`（校验 state → 换 token（dashboard client secret）→ 验 id_token（aud=horus-dashboard）→ **要求 `user_type='elder'`** → 建管理会话 → 种 HttpOnly cookie `horus_admin`=会话 id → 跳看板；**非长老 → 403**）。
-  - **管理会话**：`admin_sessions` 表（sessionId→{sub,username,userType,issuedAt,expiresAt}·寿命 = 考试时长）；`Program.cs` admin gate 由 `FixedTimeEquals(cookie, adminToken)` 改为**校验 admin_sessions（须 elder·未过期）**。静态 `adminToken` 依 R3 在安全模式退役（仅 `allowInsecure` 联调 + 测试 mint 会话）。
-  - **HTTPS**：Kestrel 自签证书（启动生成 / 加载·SAN 含服务器 IP / 主机名）；首用点过浏览器警告或预装证书。
-  - **token 交换复用**：抽出 OidcExchange 的"换 token → 验 id_token → OidcClaims"为可复用方法（采集面加 ECDH+会话；管理面加 admin 会话·无 ECDH/无 exam-seat 绑定）；dashboard 用独立 aud 的 validator。
-  - **测试**：现有 admin 401/200/cookie/`?t=` 用例改走 mint 长老会话；补 mock OIDC 覆盖"长老进 / 弟子拒 / 过期拒 / state 不符拒"。
-  - **cpplearn 适配（C7）**：加 `horus-dashboard` web client（env `OAUTH_HORUS_DASHBOARD_*` 门控·镜像现有 horus native client）。
-- **S9 看板前端接入身份画像 + 登录改造**：登录入口由"输入令牌"改为跳 `GET /admin/login`（cpplearn 授权）；座位抽屉渲染 `identity{…,userType}`（用户名/道号/境界/战力/头像 + 监考员/考生标注·现为死代码未渲染）。
+- **✅ S8 监考员看板 OIDC 登录 + 管理端授权（OIDC 取代静态令牌·R3）**：
+  - **迁移模式** `AdminAuthMode`（`token` 默认·M1-M3 原样 / `oidc` 长老会话）——与采集面 `AuthMode` 同型；**既有 admin 令牌用例零改（token 模式）**，`oidc` 模式满足 R3 无令牌后门。
+  - **端点**（`server/Identity/AdminOidcFlow.cs` + `AdminOidcEndpoints.cs`）：`GET /admin/login`（生成 state+nonce+PKCE·存内存 pending·302 到 cpplearn `/authorize`）；`GET /cb`（校验 state 单次使用 → 换 token（dashboard secret）→ 验 id_token（aud=horus-dashboard·nonce）→ **要求 `user_type='elder'`** → 建管理会话 → 种 HttpOnly cookie `horus_admin`=会话 id → 302 跳看板；**非长老 → 403 页**）。
+  - **管理会话**（`AdminSessionStore` + `admin_sessions` 表）：sessionId→{sub,userType,富画像,issuedAt,expiresAt}·寿命 = `AdminSessionMinutes`（默认 180）；`Program.cs` admin gate 在 `oidc` 模式**校验 admin_sessions（须 `IsElder`·未过期）**，无静态令牌后门；`token` 模式仍走 `FixedTimeEquals`。`/api/login`（token）在 oidc 模式返回 `use_oidc_login`；`/api/logout` 一并销毁会话。
+  - **HTTPS**（`server/Config/HttpsCert.cs`）：Kestrel 自签证书（启动 `LoadOrCreate`·SAN 含 localhost/127.0.0.1/::1/机器名 + `HttpsSanHosts`）；仅 Urls 含 https 时生效（测试 TestServer 不触发）。
+  - **公开端点** `GET /api/authmode`（gate 豁免）：前端据此切换令牌门 / OIDC 登录按钮。
+  - **测试**（`AdminOidcTests` 7 项）：长老会话放行 / 弟子拒 / 无会话拒 / 过期拒 / 静态令牌登录退役 / `/admin/login` 302 到 cpplearn（PKCE+state+dashboard client）/ `/cb` 未知 state 拒。**真机 https smoke**：自签证书生成 + Kestrel https 绑定 + `/api/authmode`=oidc + `/admin/login` 302 参数正确 + `/api/exams` 401 均验证通过。
+  - **cpplearn 适配（✅ C7）**：`horus-dashboard` web client（env `OAUTH_HORUS_DASHBOARD_*` 门控·未 commit·OIDC 套件 18 绿·生产/Round1/Agent client 零影响）。
+- **✅ S9 看板前端接入身份画像 + 登录改造**（`wwwroot/`）：登录门据 `/api/authmode` 切换——`oidc` 模式隐藏令牌输入、显示"用 cpplearn 账号登录（监考员）"按钮跳 `/admin/login`；座位抽屉渲染 `identity{userType,username,昵称,道号,境界,战力}` + **监考员/参考学员标注**（此前死代码，现已渲染）。
+
+> **Horus 端部署配置**（对应 cpplearn dashboard client）：`adminAuthMode=oidc` · `oidcIssuer`（同采集面）· `oidcDashboardClientId=horus-dashboard` · `oidcDashboardClientSecret`(或 Enc/env `HORUS_OIDC_DASHBOARD_SECRET`) · `oidcDashboardRedirectUri=https://<服务器>/cb`（须与 cpplearn `OAUTH_HORUS_DASHBOARD_REDIRECT_URIS` 一条精确一致）· Urls 含 https · 可选 `httpsSanHosts=<服务器LAN IP/主机名>`。cpplearn 侧填 `OAUTH_HORUS_DASHBOARD_CLIENT_ID/SECRET/REDIRECT_URIS` + 重启。
+
+### 10.4 M4·RBAC 残留（诚实标注）
+- **fail-closed**：`oidc` 模式下 cpplearn 不可达 → 监考员无法登录管理端（无令牌后门）。缓解=考前先登录（会话 = 考试时长，登录后不依赖 cpplearn）+ 连通性预检。
+- **自签证书信任**：监考机首用需点过浏览器警告或预装证书（受管机建议预装）。
+- **cpplearn 两批改动未 commit**（owner 自提）：`user_type` claim（claims.js/account.js/identityCore.js）+ `horus-dashboard` web client（oauth.js/db.js/.env.example/测试）。
 
 ---
 

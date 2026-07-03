@@ -25,7 +25,7 @@ public sealed class TestApp : WebApplicationFactory<Program>
     // M4:一份最小合法 JWKS(内联·让 OIDC 模式启动不去拉 issuer)。ingest 测试直接建会话,不走真验签。
     private const string DummyJwks = "{\"keys\":[{\"kty\":\"RSA\",\"use\":\"sig\",\"alg\":\"RS256\",\"kid\":\"test\",\"n\":\"sXchDaQebHnPiGvyDOAT4saGEUetSyo9MKLOoWFsueri23bOdgWp4Dy1WlUzewbgBHod5pcM9H5UGVn9YMcJDp5c\",\"e\":\"AQAB\"}]}";
 
-    public TestApp(bool adminAuth = false, bool keystrokeAuth = false, bool visionMock = false, string? authMode = null)
+    public TestApp(bool adminAuth = false, bool keystrokeAuth = false, bool visionMock = false, string? authMode = null, bool adminOidc = false)
     {
         _dataDir = Path.Combine(Path.GetTempPath(), "horus-test-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(_dataDir);
@@ -39,9 +39,14 @@ public sealed class TestApp : WebApplicationFactory<Program>
         // M4:authMode=oidc/both 时配 OIDC(内联 JWKS 免拉取);null → 默认 psk(既有测试无感)。
         Environment.SetEnvironmentVariable("HORUS_AUTH_MODE", authMode);
         bool oidc = authMode is "oidc" or "both";
-        Environment.SetEnvironmentVariable("HORUS_OIDC_ISSUER", oidc ? "https://oidc.test" : null);
+        Environment.SetEnvironmentVariable("HORUS_OIDC_ISSUER", (oidc || adminOidc) ? "https://oidc.test" : null);
         Environment.SetEnvironmentVariable("HORUS_OIDC_CLIENT_ID", oidc ? "horus-client" : null);
-        Environment.SetEnvironmentVariable("HORUS_OIDC_JWKS", oidc ? DummyJwks : null);
+        Environment.SetEnvironmentVariable("HORUS_OIDC_JWKS", (oidc || adminOidc) ? DummyJwks : null);
+        // M4·RBAC:adminOidc → 管理端走 cpplearn 长老 OIDC(dashboard client),静态令牌退役。
+        Environment.SetEnvironmentVariable("HORUS_ADMIN_AUTH_MODE", adminOidc ? "oidc" : null);
+        Environment.SetEnvironmentVariable("HORUS_OIDC_DASHBOARD_CLIENT_ID", adminOidc ? "horus-dashboard" : null);
+        Environment.SetEnvironmentVariable("HORUS_OIDC_DASHBOARD_SECRET", adminOidc ? "dash-secret" : null);
+        Environment.SetEnvironmentVariable("HORUS_OIDC_DASHBOARD_REDIRECT", adminOidc ? "https://horus.test/cb" : null);
     }
 
     /// 连接事件 WS,附带合法握手头。

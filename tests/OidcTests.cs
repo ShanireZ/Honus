@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.WebSockets;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -5,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Horus.Contracts;
 using Horus.Server.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -255,5 +257,101 @@ public class OidcIngestAuthTests
         await Ws.SendAsync(ws, ev);
         JsonElement ack = await Ws.ReceiveAsync(ws);
         Assert.Equal("ack", ack.GetProperty("type").GetString());
+    }
+}
+
+/// M4·RBAC·S8:监考员看板 OIDC 登录 + 管理端授权（长老进 / 弟子拒 / 过期拒 / 静态令牌退役）。
+public class AdminOidcTests
+{
+    private static double Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+
+    private static OidcClaims Claims(string userType, string sub = "sub-1")
+        => new(sub, userType, "user", "昵称", "道号", "", "金丹", 3, 100);
+
+    private static HttpClient NoRedirect(TestApp app)
+        => app.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+    private static async Task<HttpResponseMessage> GetCookie(HttpClient http, string path, string? sid)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, path);
+        if (sid is not null) req.Headers.Add("Cookie", "horus_admin=" + sid);
+        return await http.SendAsync(req);
+    }
+
+    [Fact]
+    public async Task 长老会话_放行管理端()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        var store = app.Services.GetRequiredService<AdminSessionStore>();
+        AdminSession elder = store.Create(Claims("elder"), Now(), 180);
+        HttpResponseMessage resp = await GetCookie(http, "/api/exams", elder.SessionId);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task 弟子会话_拒管理端()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        var store = app.Services.GetRequiredService<AdminSessionStore>();
+        AdminSession disciple = store.Create(Claims("disciple"), Now(), 180);
+        HttpResponseMessage resp = await GetCookie(http, "/api/exams", disciple.SessionId);
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task 无会话_拒管理端()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        HttpResponseMessage resp = await GetCookie(http, "/api/exams", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task 过期会话_拒管理端()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        var store = app.Services.GetRequiredService<AdminSessionStore>();
+        AdminSession stale = store.Create(Claims("elder"), Now() - 10000, 1);   // issued_at 远古 + 1min 寿命 → 已过期
+        HttpResponseMessage resp = await GetCookie(http, "/api/exams", stale.SessionId);
+        Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task 静态令牌登录_oidc模式退役()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        HttpResponseMessage resp = await http.PostAsJsonAsync("/api/login", new { token = "anything" });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        Assert.Contains("use_oidc_login", await resp.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task admin_login_重定向到cpplearn授权页()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        HttpResponseMessage resp = await http.GetAsync("/admin/login");
+        Assert.Equal(HttpStatusCode.Redirect, resp.StatusCode);
+        string loc = resp.Headers.Location!.ToString();
+        Assert.Contains("oidc.test/oauth/authorize", loc);
+        Assert.Contains("client_id=horus-dashboard", loc);
+        Assert.Contains("code_challenge=", loc);
+        Assert.Contains("code_challenge_method=S256", loc);
+        Assert.Contains("state=", loc);
+        Assert.Contains("response_type=code", loc);
+    }
+
+    [Fact]
+    public async Task cb_未知state_拒()
+    {
+        using var app = new TestApp(adminOidc: true);
+        HttpClient http = NoRedirect(app);
+        HttpResponseMessage resp = await http.GetAsync("/cb?code=x&state=nonexistent");
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 }

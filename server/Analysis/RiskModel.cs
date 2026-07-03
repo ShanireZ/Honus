@@ -65,7 +65,14 @@ public static class RiskModel
 
             case SignalType.Usb:         return 50;
             case SignalType.AltTabBurst: return 40;
-            default:                     return 0;   // window_focus / process_exit / heartbeat / screenshot
+
+            // M5 采集端硬化:服务器独立赋分(不信 Agent 自报),让规避暴露入队人工复核。
+            case SignalType.ScreenshotObscured: return 60;   // 考中遮屏/黑帧 → 入可疑队列
+            case SignalType.CapabilityDegraded: return 55;   // 采集能力被削弱(非管理员/信号源失败)→ 入队
+            case SignalType.WatchdogRestart:    return 55;   // 采集进程曾被结束(规避取证)→ 入队
+            // suspected_suspend 只作看板健康提示,不自动入队(睡眠/锁屏在合法情形也会触发,避免噪声;仍进事件时间线)。
+
+            default:                     return 0;   // window_focus / process_exit / heartbeat / screenshot / suspected_suspend
         }
     }
 

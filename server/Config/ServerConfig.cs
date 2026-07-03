@@ -96,6 +96,9 @@ public sealed record ServerConfig
     public int VisionConfidenceThreshold { get; init; } = 60;
     /// 是否也分析随机基线图(默认 false = 只分析触发型,§5 最小化上传/成本)。
     public bool VisionAnalyzeBaseline { get; init; }
+    /// 基线分析抽样率 N:`VisionAnalyzeBaseline=true` 时只分析 **1/N** 的随机基线图(确定性按 imageId 抽样·控云成本)。
+    /// 默认 1 = 全分析(保持既有语义);设 >1 抽样(如 10 ≈ 分析 10%),其余基线标 analysis_state=1 终结、补偿重扫不再拾回。
+    public int VisionBaselineSampleRate { get; init; } = 1;
     /// 补偿重扫间隔(分钟):周期性拾回 analysis_state=0 的触发型证据图(被队列丢弃 / 服务器重启丢内存队列 / 临时云失败的)。默认 5;≤0=关闭。
     public double VisionBackstopMinutes { get; init; } = 5;
     /// 单张图视觉分析的最大认领次数(含失败):临时云失败由补偿重扫重试,达此上限则放弃(防端点持续失败时死循环重扫)。默认 5。
