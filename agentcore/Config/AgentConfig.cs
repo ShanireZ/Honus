@@ -40,7 +40,16 @@ public sealed class AgentConfig
     public List<string> WhitelistHosts { get; init; } = new();   // 判题站域名,放行
     public List<string> WhitelistProcs { get; init; } = new();   // 允许进程名(无 .exe)
 
+    // 配置加载专用选项:camelCase + **允许 // 注释与尾逗号**(便于部署模板自文档化)。
+    // 不复用 Json.Wire(那是线协议/canonical 序列化器,须逐字节稳定,不能加宽松解析)。
+    private static readonly JsonSerializerOptions ConfigOpt = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
     public static AgentConfig Load(string path)
-        => JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), Json.Wire)
+        => JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(path), ConfigOpt)
            ?? throw new InvalidOperationException("配置解析失败: " + path);
 }
