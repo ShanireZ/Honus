@@ -37,11 +37,11 @@ public sealed class OidcExchange
         ExamDispatch.ActiveExam? exam = ExamDispatch.ResolveActive(_db);
         if (exam is null) return new Result(false, "no_active_exam", null, null);
 
-        // 1) 授权码 → token(client_secret_post·带 PKCE code_verifier)
+        // 1) 授权码 → token(client_secret_post·带 PKCE code_verifier)。瞬时 TLS/网络失败自动重试(见 OidcHttp)。
         string? idToken;
         try
         {
-            using var form = new FormUrlEncodedContent(new Dictionary<string, string>
+            var fields = new Dictionary<string, string>
             {
                 ["grant_type"] = "authorization_code",
                 ["code"] = req.Code,
@@ -49,12 +49,11 @@ public sealed class OidcExchange
                 ["client_id"] = _cfg.OidcClientId!,
                 ["client_secret"] = _clientSecret,
                 ["code_verifier"] = req.CodeVerifier,
-            });
-            using HttpResponseMessage resp = await _http.PostAsync(_cfg.OidcTokenEndpoint!, form, ct);
-            string body = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
+            };
+            (bool ok, int status, string body) = await OidcHttp.PostFormWithRetryAsync(_http, _cfg.OidcTokenEndpoint!, fields, _log, ct);
+            if (!ok)
             {
-                _log.LogWarning("OIDC token 端点非 200:{Status}", (int)resp.StatusCode);
+                _log.LogWarning("OIDC token 端点非 200:{Status}", status);
                 return new Result(false, "token_endpoint_error", null, null);
             }
             using JsonDocument doc = JsonDocument.Parse(body);
@@ -62,7 +61,7 @@ public sealed class OidcExchange
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "OIDC token 交换失败");
+            _log.LogWarning(ex, "OIDC token 交换失败(已重试)");
             return new Result(false, "token_exchange_failed", null, null);
         }
         if (string.IsNullOrEmpty(idToken)) return new Result(false, "no_id_token", null, null);

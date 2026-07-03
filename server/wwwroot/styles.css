@@ -297,6 +297,24 @@ body {
   text-align: right;
 }
 
+/* 考试管理按钮与刷新控件之间的竖分隔线 */
+.topbar__divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 4px;
+  background: var(--border);
+}
+
+/* 禁用态按钮（结束/全场登出在无 active 考试时）：变灰、不可点 */
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: var(--bg-3);
+  border-color: var(--border);
+}
+
 /* ============================================================
    主区布局
    ============================================================ */

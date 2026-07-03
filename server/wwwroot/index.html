@@ -60,6 +60,11 @@
     </div>
 
     <div class="topbar__controls">
+      <!-- 考试管理：开始 = 建一个 active 考试(Agent 待命轮询到即弹登录采集)；结束 = 学员停采回待命；全场登出 = 吊销全部会话并强断 -->
+      <button id="startExamBtn" class="btn btn--ok" title="开始一场新考试：建 active 考试，学员机 Agent 会自动弹登录并开始采集">开始考试</button>
+      <button id="endExamBtn" class="btn btn--ghost" title="结束当前考试：通知在线 Agent 停止采集、排空缓冲后回待命" disabled>结束考试</button>
+      <button id="logoutAllBtn" class="btn btn--primary" title="全场远程登出：吊销当前考试全部采集会话并强断连接，学员须重新登录" disabled>全场登出</button>
+      <span class="topbar__divider" aria-hidden="true"></span>
       <label class="toggle" title="每 5 秒轮询当前考试的座位与可疑队列">
         <input type="checkbox" id="autoRefresh" checked />
         <span class="toggle__track"><span class="toggle__thumb"></span></span>
@@ -68,7 +73,7 @@
       <button id="preflightBtn" class="btn btn--ghost" title="开考前自查：鉴权配置 / cpplearn 可达 / 白名单覆盖">预检</button>
       <button id="manualRefresh" class="btn btn--ghost" title="立即刷新">刷新</button>
       <span class="topbar__clock" id="clock" title="最后刷新时间">--:--:--</span>
-      <button id="logoutBtn" class="btn btn--ghost" title="清除本机保存的令牌并重新登录">更换令牌</button>
+      <button id="logoutBtn" class="btn btn--ghost" title="退出监考员登录，返回登录门">退出登录</button>
     </div>
   </header>
 

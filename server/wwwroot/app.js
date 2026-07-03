@@ -225,17 +225,102 @@
       refreshCurrent();
     });
     $("#preflightBtn").addEventListener("click", openPreflightDrawer);
+    // 考试管理：开始 / 结束 / 全场登出
+    $("#startExamBtn").addEventListener("click", createExam);
+    $("#endExamBtn").addEventListener("click", endCurrentExam);
+    $("#logoutAllBtn").addEventListener("click", logoutAllCurrent);
     $("#autoRefresh").addEventListener("change", function (e) {
       state.autoRefresh = e.target.checked;
       restartPolling();
     });
-    // 更换/退出令牌：清 cookie → 停轮询 → 清屏 → 弹登录门
+    // 退出监考员登录：清 cookie → 停轮询 → 清屏 → 弹登录门
     $("#logoutBtn").addEventListener("click", function () {
       logout();
       stopPolling();
       clearCurrentData();
-      showLoginGate("请输入监考管理令牌");
+      showLoginGate("请重新登录");
     });
+  }
+
+  /* ============================================================
+     考试管理：开始 / 结束 / 全场登出（后端端点已存在，此处只连 UI）
+     ------------------------------------------------------------
+       · 开始考试：建一个 active 考试（POST /api/exams）。学员机 Agent 每 5s 轮询
+         /oidc/active-exam，检测到即弹 cpplearn 登录、开始采集。
+       · 结束考试：POST .../end → 通知在线 Agent 停采、排空缓冲后回待命。
+       · 全场登出：POST .../logout → 吊销该考试全部采集会话 + 强断连接（学员须重登）。
+     结束 / 全场登出仅当当前考试为「进行中」时可点。
+     ============================================================ */
+  function currentExam() {
+    return state.exams.filter(function (e) { return e.examId === state.currentExamId; })[0] || null;
+  }
+
+  // 结束 / 全场登出按钮：仅当前考试 active 时启用；开始考试始终可用。
+  function updateExamControls() {
+    var active = !!(currentExam() && currentExam().status === "active");
+    var endBtn = $("#endExamBtn"), logoutAllBtn = $("#logoutAllBtn");
+    if (endBtn) endBtn.disabled = !active;
+    if (logoutAllBtn) logoutAllBtn.disabled = !active;
+  }
+
+  // 生成安全的 examId：E-YYYYMMDD-HHMM-<4位随机>。仅字母数字与连字符，满足服务器 IsSafeId。
+  function genExamId() {
+    var d = new Date();
+    var p = function (n) { return String(n).padStart(2, "0"); };
+    var stamp = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes());
+    var rand = Math.random().toString(36).slice(2, 6);
+    return "E-" + stamp + "-" + rand;
+  }
+
+  function createExam() {
+    var d = new Date();
+    var defName = (d.getMonth() + 1) + "月" + d.getDate() + "日 测验";
+    var name = window.prompt("新考试名称（学员看板显示用）：", defName);
+    if (name === null) return;             // 用户取消
+    name = name.trim();
+    if (!name) { showToast("考试名称不能为空"); return; }
+    var examId = genExamId();
+    apiPost("/api/exams", { examId: examId, name: name })
+      .then(function () {
+        showToast("已开始考试：" + name);   // loadExams 会自动选中最新的 active 考试
+        loadExams();
+      })
+      .catch(function (err) {
+        if (err && err.isAuth) return;      // 401 已弹登录门
+        showToast("开始考试失败：" + err.message);
+      });
+  }
+
+  function endCurrentExam() {
+    var ex = currentExam();
+    if (!ex) return;
+    if (!window.confirm("结束考试「" + ex.name + "」？\n在线学员的采集会停止，Agent 回到待命状态。")) return;
+    apiPost("/api/exams/" + encodeURIComponent(ex.examId) + "/end", {})
+      .then(function (r) {
+        var notified = r && typeof r.notified === "number" ? "（通知 " + r.notified + " 台在线 Agent）" : "";
+        showToast("已结束考试：" + ex.name + notified);
+        loadExams();
+      })
+      .catch(function (err) {
+        if (err && err.isAuth) return;
+        showToast("结束考试失败：" + err.message);
+      });
+  }
+
+  function logoutAllCurrent() {
+    var ex = currentExam();
+    if (!ex) return;
+    if (!window.confirm("全场登出「" + ex.name + "」？\n将吊销所有学员的采集会话并强制断开，学员需重新登录。")) return;
+    apiPost("/api/exams/" + encodeURIComponent(ex.examId) + "/logout", {})
+      .then(function (r) {
+        var revoked = r && typeof r.revoked === "number" ? r.revoked : "?";
+        showToast("已全场登出：吊销 " + revoked + " 个会话");
+        refreshCurrent();
+      })
+      .catch(function (err) {
+        if (err && err.isAuth) return;
+        showToast("全场登出失败：" + err.message);
+      });
   }
 
   /* ============================================================
@@ -372,7 +457,8 @@
         state.exams = Array.isArray(exams) ? exams : [];
         renderExamOptions();
         if (state.exams.length === 0) {
-          showEmptyEverything("暂无考试，等待 Agent 上报");
+          showEmptyEverything("暂无考试，点「开始考试」建一场");
+          updateExamControls();   // 无考试：结束/全场登出置灰
           return;
         }
         // 默认选中第一个 active，否则第一个
@@ -380,6 +466,7 @@
           || state.exams[0];
         state.currentExamId = pick.examId;
         $("#examSelect").value = pick.examId;
+        updateExamControls();
         refreshCurrent();
         restartPolling();
       })
@@ -416,6 +503,7 @@
     state.seats = [];
     state.suspicious = [];
     closeDrawer();
+    updateExamControls();
     refreshCurrent();
     restartPolling();
   }
@@ -498,6 +586,7 @@
       ? ex.pendingSuspicious
       : state.seats.reduce(function (a, s) { return a + (s.suspiciousCount || 0); }, 0);
     setOverview({ seats: seatCount, online: onlineCount, pending: pending });
+    updateExamControls();   // 每次刷新同步按钮态（考试状态可能已变）
   }
   function setOverview(o) {
     $("#statSeats").textContent = o ? o.seats : "--";
