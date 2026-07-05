@@ -1,7 +1,7 @@
 {
   // 监考服务器配置**样例(模板·已提交进 git 公开仓库)**。复制为 server.config.json(已 gitignore)后按现场填真值。
   // ⚠️ 切勿把真实密钥 / API key 填进本 sample 文件 —— 会随提交泄漏到公开仓库。真值只放 server.config.json。
-  "urls": "http://0.0.0.0:5199",
+  "urls": "http://0.0.0.0:8080",
   "dataDir": "./data",
   "dbPath": "horus.db",
   // 预共享 HMAC 密钥(base64),必须与各 Agent 的 psk 一致。

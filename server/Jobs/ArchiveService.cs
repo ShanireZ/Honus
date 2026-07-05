@@ -148,6 +148,8 @@ public sealed class ArchiveService : BackgroundService
             // 子表先删(images 被 ocr_results/logo_hits 以 FK 引用)
             Exec(conn, tx, "DELETE FROM logo_hits   WHERE image_id IN (SELECT image_id FROM images WHERE exam_id=@e)", ("@e", examId));
             Exec(conn, tx, "DELETE FROM ocr_results WHERE image_id IN (SELECT image_id FROM images WHERE exam_id=@e)", ("@e", examId));
+            // image_embeddings 无 FK 到 images(裸 PK 表·派生检索索引非取证数据不归档),须显式清理,否则向量行悬挂指向已删图、永久滞留 live 库。
+            Exec(conn, tx, "DELETE FROM image_embeddings WHERE image_id IN (SELECT image_id FROM images WHERE exam_id=@e)", ("@e", examId));
             delImages = Exec(conn, tx, "DELETE FROM images            WHERE exam_id=@e", ("@e", examId));
             delEvents = Exec(conn, tx, "DELETE FROM events            WHERE exam_id=@e", ("@e", examId));
             Exec(conn, tx, "DELETE FROM keystroke_samples WHERE exam_id=@e", ("@e", examId));

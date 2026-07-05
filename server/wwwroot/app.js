@@ -69,7 +69,8 @@
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");   // 单引号一并转义,令 esc 对属性定界方式免疫(防御纵深)
   }
 
   // 短横线容错取值

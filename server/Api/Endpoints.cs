@@ -560,11 +560,15 @@ public static class Endpoints
         // 结束考试:落状态 + 向该考试在线 Agent 广播 exam_ended(Agent 排空缓冲后停采、登出回待命)
         app.MapPost("/api/exams/{examId}/end", async (string examId, HttpContext ctx) =>
         {
+            if (!IsSafeId(examId)) return Results.BadRequest(new { error = "bad_examId" });
             double now = Now();
             int changed = db.Locked(conn =>
             {
+                // 状态守卫:只结束 active/ended 考试;绝不把 archiving/archived 复活成 ended
+                // (否则绕过 /integrity 的 applicable:false 保护 → 对已清空的 live 行返回空审计伪装 ok:true)。
                 using SqliteCommand c = conn.Cmd(
-                    "UPDATE exams SET status='ended', ended_at=@ts WHERE exam_id=@e", ("@ts", now), ("@e", examId));
+                    "UPDATE exams SET status='ended', ended_at=@ts WHERE exam_id=@e AND status IN ('active','ended')",
+                    ("@ts", now), ("@e", examId));
                 return c.ExecuteNonQuery();
             });
             if (changed == 0) return Results.NotFound();

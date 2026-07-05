@@ -6,8 +6,8 @@ namespace Horus.Server.Config;
 /// 服务器配置(从 server.config.json 加载,camelCase)。record 便于用 with 施加环境变量覆盖。
 public sealed record ServerConfig
 {
-    /// Kestrel 绑定地址(可多个,逗号分隔),如 "http://0.0.0.0:5199"。
-    public string Urls { get; init; } = "http://0.0.0.0:5199";
+    /// Kestrel 绑定地址(可多个,逗号分隔),如 "http://0.0.0.0:8080"。默认 8080 与 Agent 内置默认 / dist 成品 / 部署文档一致。
+    public string Urls { get; init; } = "http://0.0.0.0:8080";
 
     /// 数据根目录:SQLite 文件与截图原图都在此下。
     public string DataDir { get; init; } = "./data";

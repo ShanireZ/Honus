@@ -48,6 +48,18 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
         AgentHub.Conn conn = hub.Register(agentId, examId, ws);   // 登记在线连接(供 config_update 下推)
         log.LogInformation("Agent 连接 exam={Exam} seat={Seat} agent={Agent}", examId, seatId, agentId);
 
+        // 闭合全场登出竞态:握手期(IngestAuth.Resolve 已读取会话)与 hub.Register 之间存在窗口——若此刻发生 /logout,
+        // RevokeByExam(DELETE 会话)恒先于 PushSessionRevokedAsync(遍历 _conns 强断)。故本连接若在 abort 遍历时尚未登记,
+        // 会被漏断;而收帧循环只用握手期缓存的 auth,从不复查会话。登记后立即复查一次 OIDC 会话仍在:
+        // 因 DELETE 先于 abort,凡"错过 abort"的连接必然登记于 DELETE 之后 → 此复查必发现会话已吊销 → 主动断开。
+        if (auth.Session is not null && sessions.Get(sessionId, Now()) is null)
+        {
+            hub.Unregister(agentId, conn);
+            log.LogInformation("Agent 登记后发现会话已吊销/过期,断开 exam={Exam} seat={Seat} agent={Agent}", examId, seatId, agentId);
+            try { ws.Abort(); } catch { /* 已断,忽略 */ }
+            return;
+        }
+
         try
         {
             while (ws.State == WebSocketState.Open)

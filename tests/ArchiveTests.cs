@@ -426,6 +426,37 @@ public class FileDbArchiveTests
     }
 
     [Fact]
+    public void 归档清理_向量索引行随图删除_不留孤儿()
+    {
+        // CI-L1:image_embeddings 无 FK 到 images(裸 PK 表),归档清理须显式删除,否则向量行悬挂指向已删图、永久滞留 live 库。
+        string dir = TempDir();
+        try
+        {
+            using var db = new Db(Path.Combine(dir, "live.db"));
+            var storage = new Storage(dir);
+            SeedSignedEvidence(db, storage, "ended", 1000.0, writeImgFile: true);
+            // 为该证据图播一条向量索引行(模拟按图搜图已嵌入过)。
+            db.Write(conn =>
+            {
+                using SqliteCommand c = conn.Cmd(
+                    "INSERT INTO image_embeddings (image_id,dim,embedding,embedded_at) VALUES (@id,512,@e,@t)",
+                    ("@id", ImgId), ("@e", new byte[] { 1, 2, 3, 4 }), ("@t", 1000.0));
+                c.ExecuteNonQuery();
+            });
+            long before = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT COUNT(*) FROM image_embeddings"); return Convert.ToInt64(c.ExecuteScalar()); });
+            Assert.Equal(1, before);
+
+            var svc = new ArchiveService(db, storage, Cfg(), NullLogger<ArchiveService>.Instance);
+            Assert.Equal(1, svc.RunOnce(1000.0 + 40 * Day).Archived);
+
+            // 归档后 live 图已清空 → 向量行也应随之清理,无孤儿滞留。
+            long orphans = db.Read(conn => { using SqliteCommand c = conn.Cmd("SELECT COUNT(*) FROM image_embeddings"); return Convert.ToInt64(c.ExecuteScalar()); });
+            Assert.Equal(0, orphans);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
     public void copy后delete前崩溃_重跑不重复归档且live清空()
     {
         // #item4:模拟"copy 已完成(archive 有数据 + 证据图已移冷存)、delete 未执行(live 数据还在·status='archiving')"崩溃态。

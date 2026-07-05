@@ -65,6 +65,27 @@ public class ExamDispatchTests
     }
 
     [Fact]
+    public async Task 结束已归档考试_被状态守卫拒_不复活伪装ok()
+    {
+        // COR-1:end 端点须有状态守卫,绝不把 archived/archiving 复活成 ended
+        // (否则绕过 /integrity 的 applicable:false 保护 → 对已清空的 live 行返回空审计伪装 ok:true)。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http, "E1");
+
+        // 直接把考试置为已归档态(模拟归档作业已跑完)。
+        var db = app.Services.GetRequiredService<Db>();
+        db.Write(conn => { using var c = conn.Cmd("UPDATE exams SET status='archived' WHERE exam_id='E1'"); c.ExecuteNonQuery(); });
+
+        // 对已归档考试 POST /end → 被拒(404),不得复活成 ended。
+        var resp = await http.PostAsync("/api/exams/E1/end", null);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, resp.StatusCode);
+
+        string status = db.Read(conn => { using var c = conn.Cmd("SELECT status FROM exams WHERE exam_id='E1'"); return (string)c.ExecuteScalar()!; });
+        Assert.Equal("archived", status);   // 状态仍为 archived,未被复活
+    }
+
+    [Fact]
     public async Task 多场active_派发最近创建的一场()
     {
         using var app = new TestApp();

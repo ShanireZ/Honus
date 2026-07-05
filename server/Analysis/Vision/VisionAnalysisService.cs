@@ -155,8 +155,20 @@ public sealed class VisionAnalysisService : BackgroundService
             derived, new VisionContext(meta.Exam, meta.Seat, imageId, meta.Trigger), ct);
         if (v is null)
         {
-            // 临时失败(超时/5xx/网络/空 content/解析失败):**不终结**(analysis_state 保持 0)→ 补偿重扫按 attempts<上限 重试(闭合 F1)。
-            _log.LogWarning("视觉分析未得结果(临时失败),保留待补偿重扫 image={Image}", imageId);
+            // 临时失败(超时/5xx/网络/空 content/解析失败):未达上限**不终结**(analysis_state 保持 0)→ 补偿重扫按 attempts<上限 重试(闭合 F1)。
+            // 已达上限:置终态(state=1)放弃 —— 否则永久卡 state=0 僵尸态(claim/backstop 都按 attempts<上限 过滤,既不重试也不终结)。
+            // 与确定态失败一致:终态但无 ocr_results 行 → 看板/审计可据"state=1 且无 ocr_results"区分"放弃"与"已析干净"。
+            int abandoned = _db.Write(conn =>
+            {
+                using SqliteCommand u = conn.Cmd(
+                    "UPDATE images SET analysis_state=1 WHERE image_id=@id AND analysis_state=0 AND analysis_attempts>=@max",
+                    ("@id", imageId), ("@max", _cfg.VisionMaxAttempts));
+                return u.ExecuteNonQuery();
+            });
+            if (abandoned > 0)
+                _log.LogWarning("视觉分析连续 {N} 次临时失败,放弃 image={Image}(仍留作证据·无视觉判定)", _cfg.VisionMaxAttempts, imageId);
+            else
+                _log.LogWarning("视觉分析未得结果(临时失败),保留待补偿重扫 image={Image}", imageId);
             return;
         }
 

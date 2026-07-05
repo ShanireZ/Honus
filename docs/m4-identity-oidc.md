@@ -1,7 +1,7 @@
 # M4 身份层 —— cpplearn OIDC 接入 · 取代共享 PSK（设计与任务计划）
 
 - 项目：**Horus** 局域网考试监考系统 · 里程碑：**M4 身份层（健壮性/信任模型）**
-- 日期：2026-07-02（RBAC 增补 + §11 灰度验收清单 2026-07-03）· 状态：**采集面 OIDC + RBAC(S8/S9) + both→oidc 灰度验收清单/工具均已实现·180 测试全绿·真机 smoke 通过**（cpplearn 两批改动待 owner commit）
+- 日期：2026-07-02（RBAC 增补 + §11 灰度验收清单 2026-07-03）· 状态：**采集面 OIDC + RBAC(S8/S9) + both→oidc 灰度验收清单/工具均已实现·180 测试全绿（M4 里程碑时·累计 221 全绿）·真机 smoke 通过**（cpplearn 两批改动待 owner commit）
 - 关联：[architecture-v0.2.md §10.1](architecture-v0.2.md)（事件通道跨身份栽赃残留）· [api-contract-m1.md](api-contract-m1.md)
 - 依据：对 `Cpplearn`（OIDC provider）与 `Round1`（OIDC 客户端样板）的只读调研（见文末《调研证据》）
 
@@ -115,7 +115,7 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
 > 若日后改走**拓扑 B（Agent public client）**才需额外放开 `token_endpoint_auth_method=none`（改 `provider.js` 硬逻辑）——**拓扑 A 不需要**。
 > **部署**：cpplearn 侧填 `OAUTH_HORUS_*` env + 重启即启用 horus client;`OAUTH_HORUS_REDIRECT_URIS` 默认 `http://127.0.0.1/cb`。
 
-**✅ 单测**：cpplearn 全量 `test:server` 全绿（**75 unit + 65 integration = 585 测试**）+ Horus **142 测试**（含 A1/A2 端到端闭合）。
+**✅ 单测**：cpplearn 全量 `test:server` 全绿（**75 unit + 65 integration = 585 测试**·外部仓）+ Horus **142 测试**（S1–S7 阶段·含 A1/A2 端到端闭合·累计 **221 全绿**）。
 **✅ 本地 live smoke 已通过（2026-07-02·真组件端到端）**：本地起真 cpplearn（`OAUTH_ISSUER=http://127.0.0.1:3939` 全 HTTP 免证书·加载 C1–C5）+ 真 Horus Server（authMode=oidc·启动即从 cpplearn 拉 JWKS）+ **真 Horus.Agent.exe**。实测链路全绿：
 > - cpplearn 真 oidc-provider 签发的 **id_token 内含 `horus_profile` 富 claim**（`username/nickname/dao_name/realm/combat_power` 等）——**`conformIdTokenClaims:false` 运行时确认**（最大未知项已消除）；`aud=horus-client`、`iss`、`nonce` 均正确。
 > - Agent（native·loopback 动态端口 56510）授权码 + PKCE → 回调收 code → Horus `/oidc/exchange`：**真 token 交换 + RS256 验签一枚真 cpplearn id_token + ECDH 派生 K_sess + 建会话**。
@@ -124,7 +124,7 @@ M4 用 **cpplearn OIDC 的 per-user 身份**取代 Horus 现有的**全场共享
 
 ---
 
-## 5. Horus 端任务（✅ S1–S7 + A1–A3 已实现 · 142 测试全绿含 12 项 M4 新增）
+## 5. Horus 端任务（✅ S1–S7 + A1–A3 已实现 · 142 测试全绿含 12 项 M4 新增·累计 221 全绿）
 
 **已实现总览**：`server/Identity/`(OidcTokenValidator·SessionStore·OidcExchange·OidcEndpoints·IngestAuth·OidcSecret/OidcJwks) + `contracts/SessionCrypto.cs`(ECDH) + ingest 改造(EventIngest/ImageIngest 会话验签 + 身份强制) + 看板富画像;`agentcore/Identity/OidcLoginFlow.cs`(loopback 登录) + UplinkClient 会话签名 + Agent Program 登录接线。**密钥选型最终定案**:①id_token 验签 = **纯 BCL RSA-PKCS1-SHA256**(无 JWT 依赖·预置 JWKS 离线验)②会话密钥 = **ECDH-P256(BCL)→ SHA256 KDF → K_sess**,复用既有 HMAC 哈希链(只换密钥源·私钥不过网)。**A1/A2 闭合已端到端锁定**(OidcIngestAuthTests:本人事件接受 / 拿自己会话给他人栽赃拒 / 改 agentId 抢 seq 拒 / both 模式 PSK 共存)。
 
@@ -228,7 +228,7 @@ M4 的 OIDC 只把身份用在**采集面防栽赃**（A1/A2）；身份的**授
 - `/oidc/exchange` profile 与 `/api/exams/{id}/seats` 的 `identity` 均带 `userType`（看板可据此标注/筛选）。
 - 新增回归：`user_type` 提取 / 缺省考生 / 未知值归一化为考生。
 
-### 10.3 已实现·第二批 S8/S9（监考员 OIDC 登录 + 管理端授权·**151 测试全绿·真机 https smoke 通过**）
+### 10.3 已实现·第二批 S8/S9（监考员 OIDC 登录 + 管理端授权·**151 测试全绿（S8/S9 阶段·累计 221 全绿）·真机 https smoke 通过**）
 
 **R5 拓扑（owner 拍板：本机 + 远端 LAN 监考工作站都要支持）**：因 cpplearn horus client 是 `native+loopback`（仅 `127.0.0.1` 回调）、远端工作站浏览器的 loopback 回不到服务器，故**监考服务器启用自签名 HTTPS** + cpplearn **新增第二个 `horus-dashboard` web client**（confidential·`redirect=https://<服务器>/cb`·authorization_code+PKCE·scope `openid horus_profile`）。远端/本机浏览器均经 https 直达服务器 `/cb`，走**标准服务器端授权码流**，无需每台装助手。**Agent 仍用原 native+loopback client 不变**。
 

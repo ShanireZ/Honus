@@ -91,6 +91,34 @@ public class OidcTokenValidatorTests
     }
 
     [Fact]
+    public void nbf在未来_尚未生效_拒()
+    {
+        // 纵深防御:签发方给了未来的 nbf(未生效时间)→ 拒(超时钟偏移容差)。
+        using RSA rsa = RSA.Create(2048);
+        var v = new OidcTokenValidator(BuildJwks(rsa, Kid), Issuer, Audience);
+        string payload = JsonSerializer.Serialize(new
+        {
+            iss = Issuer, aud = Audience, sub = "sub-z", exp = Now() + 3600, nbf = Now() + 3600, nonce = "n1",
+        });
+        var ex = Assert.Throws<OidcValidationException>(() => v.Validate(SignJwt(rsa, Kid, payload), "n1", Now()));
+        Assert.Contains("nbf", ex.Message);
+    }
+
+    [Fact]
+    public void nbf已过_通过()
+    {
+        // nbf 已生效(过去)→ 不因 nbf 而拒(其余合法则通过)。
+        using RSA rsa = RSA.Create(2048);
+        var v = new OidcTokenValidator(BuildJwks(rsa, Kid), Issuer, Audience);
+        string payload = JsonSerializer.Serialize(new
+        {
+            iss = Issuer, aud = Audience, sub = "sub-w", exp = Now() + 3600, nbf = Now() - 100, nonce = "n1",
+        });
+        OidcClaims c = v.Validate(SignJwt(rsa, Kid, payload), "n1", Now());
+        Assert.Equal("sub-w", c.Sub);
+    }
+
+    [Fact]
     public void 签名被篡改_拒()
     {
         using RSA rsa = RSA.Create(2048);

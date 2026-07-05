@@ -57,6 +57,10 @@ public sealed class OidcTokenValidator
             throw new OidcValidationException("id_token 缺 exp");
         if (nowUnix > exp + ClockSkewSeconds)
             throw new OidcValidationException("id_token 已过期");
+        // nbf(若签发方给了"未生效时间"则校验·同 exp 的时钟偏移容差·纵深防御)
+        if (payload.TryGetProperty("nbf", out JsonElement nbfEl) && nbfEl.TryGetDouble(out double nbf)
+            && nowUnix + ClockSkewSeconds < nbf)
+            throw new OidcValidationException("id_token 尚未生效(nbf)");
         // nonce(防重放:必须等于登录时下发的)
         if (expectedNonce is not null && Str(payload, "nonce") != expectedNonce)
             throw new OidcValidationException("id_token nonce 不符(疑重放 / 非本次登录)");
