@@ -230,6 +230,7 @@
     $("#startExamBtn").addEventListener("click", createExam);
     $("#endExamBtn").addEventListener("click", endCurrentExam);
     $("#logoutAllBtn").addEventListener("click", logoutAllCurrent);
+    $("#whitelistBtn").addEventListener("click", openWhitelistDrawer);
     $("#autoRefresh").addEventListener("change", function (e) {
       state.autoRefresh = e.target.checked;
       restartPolling();
@@ -256,12 +257,13 @@
     return state.exams.filter(function (e) { return e.examId === state.currentExamId; })[0] || null;
   }
 
-  // 结束 / 全场登出按钮：仅当前考试 active 时启用；开始考试始终可用。
+  // 结束 / 全场登出 / 白名单按钮：仅当前考试 active 时启用；开始考试始终可用。
   function updateExamControls() {
     var active = !!(currentExam() && currentExam().status === "active");
-    var endBtn = $("#endExamBtn"), logoutAllBtn = $("#logoutAllBtn");
+    var endBtn = $("#endExamBtn"), logoutAllBtn = $("#logoutAllBtn"), wlBtn = $("#whitelistBtn");
     if (endBtn) endBtn.disabled = !active;
     if (logoutAllBtn) logoutAllBtn.disabled = !active;
+    if (wlBtn) wlBtn.disabled = !active;
   }
 
   // 生成安全的 examId：E-YYYYMMDD-HHMM-<4位随机>。仅字母数字与连字符，满足服务器 IsSafeId。
@@ -754,6 +756,80 @@
     }).catch(function (err) {
       if (err && err.isAuth) return;
       body.innerHTML = '<div class="loading">预检失败：' + esc(err.message || "未知错误") + '</div>';
+    });
+  }
+
+  /* ---------- 白名单热更下发 ---------- */
+  var LUOGU_HOST_DEFAULT = "luogu.com.cn\nwww.luogu.com.cn";
+
+  function linesToArr(txt) {
+    return String(txt || "").split(/\r?\n/).map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length > 0; });
+  }
+
+  function openWhitelistDrawer() {
+    var ex = currentExam();
+    if (!ex) return;
+    openDrawer("whitelist", "白名单热更");
+    var body = $("#drawerBody");
+    body.innerHTML = '<div class="loading">读取当前配置…</div>';
+    apiGet("/api/exams/" + encodeURIComponent(ex.examId) + "/config").then(function (r) {
+      if (state.drawerMode !== "whitelist") return;
+      var cfg = (r && r.config) || {};
+      state.wlConfig = cfg;   // 保留其它字段(阈值/截图参数)，下发时合并
+      var pushed = !!(cfg.whitelistHosts || cfg.whitelistProcs);
+      var hosts = Array.isArray(cfg.whitelistHosts) ? cfg.whitelistHosts.join("\n") : "";
+      var procs = Array.isArray(cfg.whitelistProcs) ? cfg.whitelistProcs.join("\n") : "";
+      body.innerHTML =
+        '<div class="wl">' +
+          '<p class="wl__note">下发会<b>替换</b>该考试所有在线 Agent 的白名单并<b>持久化</b>（Agent 重连时自动补推，仍生效）。' +
+          (pushed ? '下面是当前已下发的白名单。'
+                  : '尚未下发过；Agent 正使用内置默认（洛谷 + 常见 IDE）。已为你预填洛谷判题站，按需增改。') +
+          '</p>' +
+          '<label class="wl__label" for="wlHosts">判题站白名单 · 域名（一行一个，必填）</label>' +
+          '<textarea id="wlHosts" class="wl__ta" rows="5" spellcheck="false" autocomplete="off" placeholder="luogu.com.cn"></textarea>' +
+          '<label class="wl__label" for="wlProcs">允许进程白名单 · 进程名去扩展名（一行一个）</label>' +
+          '<p class="wl__sub">留空 = 不下发此项，Agent 保留内置默认（code / devenv / g++ / gcc 等常见 IDE/编译器）。</p>' +
+          '<textarea id="wlProcs" class="wl__ta" rows="6" spellcheck="false" autocomplete="off" placeholder="code&#10;devenv&#10;g++&#10;gcc"></textarea>' +
+          '<div class="wl__actions">' +
+            '<button id="wlPushBtn" type="button" class="btn btn--ok">下发到在线 Agent</button>' +
+            '<span id="wlHint" class="wl__hint" role="status" aria-live="polite"></span>' +
+          '</div>' +
+        '</div>';
+      // 值经 .value 注入(非 innerHTML)，不受 payload 影响，无 XSS 面。
+      $("#wlHosts").value = hosts || (pushed ? "" : LUOGU_HOST_DEFAULT);
+      $("#wlProcs").value = procs;
+      $("#wlPushBtn").addEventListener("click", function () { pushWhitelist(ex); });
+    }).catch(function (err) {
+      if (err && err.isAuth) return;
+      body.innerHTML = '<div class="loading">读取配置失败：' + esc(err.message || "未知错误") + '</div>';
+    });
+  }
+
+  function pushWhitelist(ex) {
+    var hosts = linesToArr($("#wlHosts").value);
+    var procs = linesToArr($("#wlProcs").value);
+    var hint = $("#wlHint");
+    var setHint = function (msg, bad) { if (hint) { hint.textContent = msg; hint.style.color = bad ? "#f38ba8" : "#9aa0aa"; } };
+    if (!hosts.length) { setHint("判题站白名单不能为空（否则学员访问洛谷也会被误判为高危）", true); return; }
+
+    // 合并现有配置(保留阈值/截图参数等)，仅覆盖白名单两项；进程留空则不下发该项(不覆盖 Agent 默认)。
+    var cfg = {}, cur = state.wlConfig || {};
+    Object.keys(cur).forEach(function (k) { cfg[k] = cur[k]; });
+    cfg.whitelistHosts = hosts;
+    if (procs.length) cfg.whitelistProcs = procs; else delete cfg.whitelistProcs;
+
+    var btn = $("#wlPushBtn");
+    if (btn) btn.disabled = true;
+    setHint("下发中…", false);
+    apiPost("/api/exams/" + encodeURIComponent(ex.examId) + "/config", cfg).then(function (r) {
+      var n = r && typeof r.pushedTo === "number" ? r.pushedTo : 0;
+      showToast("白名单已下发：推送到 " + n + " 台在线 Agent（已持久化，重连仍生效）");
+      closeDrawer();
+    }).catch(function (err) {
+      if (btn) btn.disabled = false;
+      if (err && err.isAuth) return;
+      setHint("下发失败：" + (err.message || "未知错误"), true);
     });
   }
 

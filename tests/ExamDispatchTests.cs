@@ -86,6 +86,37 @@ public class ExamDispatchTests
     }
 
     [Fact]
+    public async Task 白名单下发后GET回填_返回已存配置()
+    {
+        // 看板白名单编辑器:POST 下发 → GET 读回持久化配置以回填抽屉。
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http, "E1");
+
+        (await http.PostAsJsonAsync("/api/exams/E1/config",
+            new { whitelistHosts = new[] { "luogu.com.cn" }, whitelistProcs = new[] { "code", "g++" } })).EnsureSuccessStatusCode();
+
+        JsonElement r = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/config");
+        Assert.Equal("E1", r.GetProperty("examId").GetString());
+        JsonElement cfg = r.GetProperty("config");
+        Assert.Equal(JsonValueKind.Object, cfg.ValueKind);
+        var hosts = cfg.GetProperty("whitelistHosts").EnumerateArray().Select(e => e.GetString()).ToArray();
+        Assert.Contains("luogu.com.cn", hosts);
+        var procs = cfg.GetProperty("whitelistProcs").EnumerateArray().Select(e => e.GetString()).ToArray();
+        Assert.Contains("g++", procs);
+    }
+
+    [Fact]
+    public async Task 未下发考试GET配置_返回config为null()
+    {
+        using var app = new TestApp();
+        HttpClient http = app.CreateClient();
+        await CreateExamAsync(http, "E2");
+        JsonElement r = await http.GetFromJsonAsync<JsonElement>("/api/exams/E2/config");
+        Assert.Equal(JsonValueKind.Null, r.GetProperty("config").ValueKind);
+    }
+
+    [Fact]
     public async Task 多场active_派发最近创建的一场()
     {
         using var app = new TestApp();

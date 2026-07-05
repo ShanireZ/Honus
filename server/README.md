@@ -11,7 +11,7 @@
 ## 构建 / 测试
 ```bash
 dotnet build ../Horus.sln -c Debug     # 全量(含 Agent，走 net8.0-windows)
-dotnet test  ../Horus.sln -c Debug     # 端到端测试(221 项全绿)
+dotnet test  ../Horus.sln -c Debug     # 端到端测试(225 项全绿)
 ```
 
 ## 运行

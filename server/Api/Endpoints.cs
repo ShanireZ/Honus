@@ -598,6 +598,16 @@ public static class Endpoints
             return Results.Json(new { ok = true, examId, pushedTo });
         });
 
+        // 读回该考试当前已下发/持久化的配置(供看板白名单编辑器回填);未下发过 → config:null。
+        app.MapGet("/api/exams/{examId}/config", (string examId) =>
+        {
+            if (!IsSafeId(examId)) return Results.BadRequest(new { error = "bad_examId" });
+            string? cfg = hub.GetConfig(examId);
+            if (cfg is null) return Results.Json(new { examId, config = (object?)null });
+            try { return Results.Json(new { examId, config = JsonNode.Parse(cfg) }); }
+            catch { return Results.Json(new { examId, config = (object?)null }); }   // 存储损坏兜底
+        });
+
         // 监考员点名抓图(D2):向指定在线 Agent 推 capture_now,Agent 立即抓一张(dedup 关闭)。agent 不在线 → pushed:false。
         app.MapPost("/api/agents/{agentId}/capture", async (string agentId, HttpContext ctx) =>
         {
