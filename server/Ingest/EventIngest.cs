@@ -238,10 +238,13 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
 
             // 只对**新落库**事件入可疑队列(避免重传重复入队);用有效风险判阈值,url_unreadable 无视阈值。
             // agentRisk 低于阈值但 serverRisk 顶上去 → 记 agent_risk_understated,是篡改逃逸的取证信号。
+            // M5 健康信号(source='health')无论风险分都入「采集健康」面板(纯提示,不污染作弊裁决率)。
+            string healthKind = Suspicion.KindFor(sigType, payloadEl);
+            bool isHealth = Suspicion.SourceForKind(healthKind) == "health";
             if (id is not null && typeStr != "heartbeat" &&
-                (effRisk >= cfg.RiskThreshold || IsForcedReview(typeStr, payloadRaw)))
+                (effRisk >= cfg.RiskThreshold || IsForcedReview(typeStr, payloadRaw) || isHealth))
             {
-                string? tamperNote = serverRisk >= cfg.RiskThreshold && risk < cfg.RiskThreshold
+                string? tamperNote = !isHealth && serverRisk >= cfg.RiskThreshold && risk < cfg.RiskThreshold
                     ? $"agent_risk_understated agent={risk} server={serverRisk}" : null;
                 EnqueueSuspicious(conn, examId, seatId, ts, typeStr, effRisk, id.Value, evidenceImageId, payloadRaw, tamperNote);
             }

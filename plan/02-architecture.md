@@ -14,6 +14,8 @@
 
 ## A1 〔P3〕`schema.sql` 仍声明 `vec_images` sqlite-vec 虚拟表（误导死代码）
 
+**状态（2026-07-15）**：✅ 已实施。已从 `schema/schema.sql` 彻底删除 `vec_images USING vec0` 死 DDL；`server/Data/Schema.cs` 的 `Apply()` 移除 `.Where(!Contains("USING vec0"))` 运行时剥离（已无此语句可剥）；`tests/ReliabilityTests.cs` 的 vec0 断言注释同步更新为「`vec_images` 已从 schema 移除，不依赖 sqlite-vec」。
+
 **证据**
 - `schema/schema.sql:106-111` 仍声明 `CREATE VIRTUAL TABLE IF NOT EXISTS vec_images USING vec0(...)`。
 - 实做已改为普通 `image_embeddings` BLOB 表 + C# 暴力余弦（schema.sql:113-120 注释已说明「M3 实做·C# 暴力余弦·不依赖 sqlite-vec」；README:53/98、AGENTS.md:104 一致）。
@@ -30,6 +32,8 @@
 
 ## A2 〔P3〕API 契约层缺乏独立测试，回归无防护
 
+**状态（2026-07-15）**：✅ 已实施。新增 `tests/EndpointsTests.cs`（7 项断言）：无 token→401、authmode 形态（psk + imageSearchEnabled）、创建考试入列表、decide 状态机（confirmed + 误值→400）、health 项裁决→400、`/health` 与 `/suspicious` 分离、search-image 形态。全测试 265 项全绿（原 227）。
+
 **证据**
 - `server/Api/Endpoints.cs` 约 761 行、~20 个端点（login / authmode / exams CRUD / suspicious decide / capture / archive run / search-image / preflight 等）。
 - `tests/` 下 16 个测试文件，但 `Endpoints` 关键字命中 **0 文件**（其余覆盖 ingest / integrity / archive / oidc / image-search / hardening / reliability 等）。`TestApp.cs` 可能提供部分集成覆盖，但无针对契约形状/状态码的聚焦测试。
@@ -44,6 +48,8 @@
 ---
 
 ## A3 〔P3〕`capture_now` 采集端 handler 缺启动期断言（防御性）
+
+**状态（2026-07-15）**：✅ 已实施。`agent/Program.cs` 注入 `OnCaptureNow` 后加启动断言：未注入则 `Console.Error` 告警「capture_now 处理器未注入 → 点名抓图将静默失效」；`UplinkClient.OnCaptureNow` 字段注释同步点明静默失效风险（见 08-T6）。
 
 **证据**
 - `UplinkClient.OnCaptureNow`（`agentcore/Transport/UplinkClient.cs:33`）为可空 `Action<string>?`；`agent/Program.cs:153` 注入。若未来初始化顺序变化导致未注入，服务端 `pushed:true` 但 Agent 不抓图，形成「静默失效」。

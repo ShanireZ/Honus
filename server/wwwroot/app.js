@@ -26,7 +26,8 @@
     // M5 采集健康告警(只读,不计入作弊裁决):与 Suspicion.KindFor 三分支对应
     screen_obscured:    { label: "屏幕遮挡",     fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" },
     capability_degraded:{ label: "能力降级",     fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" },
-    watchdog_restart:   { label: "看门狗重启",   fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" }
+    watchdog_restart:   { label: "看门狗重启",   fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" },
+    suspected_suspend:  { label: "疑似挂起",     fg: "#c9b6ff", bg: "#241a3a", bd: "#7a5ccc" }
   };
   function kindMeta(kind) {
     return KIND_META[kind] || { label: kind || "未知", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" };
@@ -807,7 +808,7 @@
         '<td><span class="kind-tag" style="color:' + m.fg +
           ";background:" + m.bg + ";border-color:" + m.bd + '">' +
           esc(m.label) + "</span></td>" +
-        '<td class="num">' + dash(item.score) + "</td>" +
+        '<td class="num">' + (item.score > 0 ? dash(item.score) : "—") + "</td>" +
         "<td>" + fmtTime(item.ts) + "</td>" +
         '<td><span class="status-tag" style="color:#f9e2af;background:rgba(249,226,175,.12);border-color:#a9741f">健康告警</span></td>';
 
@@ -1254,7 +1255,13 @@
     state.lightboxImageId = imageId || null;
     var btn = $("#searchSimilarBtn"), res = $("#similarResults");
     if (res) { res.hidden = true; res.innerHTML = ""; }
-    if (btn) btn.hidden = !(state.imageSearchEnabled && state.lightboxImageId);
+    if (btn) {
+      var usable = !!(state.imageSearchEnabled && state.lightboxImageId);
+      btn.hidden = !state.lightboxImageId;             // 有图才显示
+      btn.disabled = !usable;                          // 未启用嵌入器 → 禁用态引导
+      btn.title = usable ? "以当前图为查询,捞本场相似帧"
+                         : "按图搜图不可用:未部署 CLIP 模型(model.onnx)";
+    }
   }
   function closeLightbox() {
     $("#lightbox").hidden = true;
@@ -1265,6 +1272,7 @@
 
   // 按图搜图:以当前灯箱图为查询,捞本场相似帧,渲染缩略图条(点击切换查看)。
   function searchSimilar() {
+    if (!state.imageSearchEnabled) { showToast("按图搜图不可用：未部署 CLIP 模型（model.onnx）"); return; }
     var imageId = state.lightboxImageId, examId = state.currentExamId;
     if (!imageId || !examId) return;
     var res = $("#similarResults");

@@ -8,6 +8,21 @@ namespace Horus.Server.Analysis;
 /// 服务器 risk ≥ 阈值即入 suspicious_queue;M2/M3 再叠加 OCR/Logo/击键。
 public static class Suspicion
 {
+    /* SignalType → kind → 前端标签 总表（T4：新增信号时据此同步补 KIND_META，防漏标签）
+     * ScreenshotObscured   → screen_obscured     → 屏幕遮挡      (health)
+     * CapabilityDegraded   → capability_degraded → 能力降级      (health)
+     * WatchdogRestart      → watchdog_restart    → 看门狗重启    (health)
+     * SuspectedSuspend     → suspected_suspend    → 疑似挂起      (health)
+     * BrowserUrl(ai)       → web_ai              → AI 网站       (suspicion)
+     * BrowserUrl(search)   → search              → 搜题         (suspicion)
+     * BrowserUrl(other)    → non_whitelist_web   → 非白名单网站  (suspicion)
+     * BrowserUrl(unreadable)→ browser_unreadable → 浏览器不可读  (suspicion)
+     * ProcessStart         → non_whitelist_proc  → 非白名单进程  (suspicion)
+     * Clipboard            → large_paste         → 大段粘贴      (suspicion)
+     * Usb                  → usb                 → USB 设备      (suspicion)
+     * (其它/兜底)           → suspect             → 可疑         (suspicion)
+     * 视觉判定(ide_plugin/remote_tool)经 VisionVerdict.Kind() 映射,同源归 suspicion。
+     */
     // 命中黑名单即细分标签。黑名单与 RiskModel 共用同一份,避免风险判据与标签判据漂移。
     private static string[] AiHosts => RiskModel.AiHosts;
     private static string[] SearchHosts => RiskModel.SearchHosts;
@@ -35,6 +50,7 @@ public static class Suspicion
             case SignalType.ScreenshotObscured: return "screen_obscured";
             case SignalType.CapabilityDegraded: return "capability_degraded";
             case SignalType.WatchdogRestart:    return "watchdog_restart";
+            case SignalType.SuspectedSuspend:   return "suspected_suspend";   // M8:统一经「采集健康」面板呈现
             default:                      return "suspect";
         }
     }
@@ -43,7 +59,7 @@ public static class Suspicion
     /// 其余作弊线索默认 source='suspicion'。判据与 KindFor 的三分支保持一致,避免漂移。
     public static string SourceForKind(string kind)
     {
-        return kind is "screen_obscured" or "capability_degraded" or "watchdog_restart"
+        return kind is "screen_obscured" or "capability_degraded" or "watchdog_restart" or "suspected_suspend"
             ? "health" : "suspicion";
     }
 

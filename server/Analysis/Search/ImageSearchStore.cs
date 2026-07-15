@@ -45,11 +45,12 @@ public sealed class ImageSearchStore(Db db)
     });
 
     /// 暴力余弦 top-N(排除自身)。返回 (imageId, score) 降序。
-    public static List<(string id, double score)> TopN(float[] query, List<(string id, float[] vec)> corpus, int n, string? excludeId)
+    /// cosineFloor:低于此分的帧视为无关被过滤(默认 0 不过滤);n 会被钳到 [1,100](B1/B2)。
+    public static List<(string id, double score)> TopN(float[] query, List<(string id, float[] vec)> corpus, int n, string? excludeId, double cosineFloor = 0.0)
         => corpus.Where(c => c.id != excludeId)
                  .Select(c => (c.id, score: VecMath.Cosine(query, c.vec)))
-                 .Where(x => x.score > -1)
+                 .Where(x => x.score >= cosineFloor)
                  .OrderByDescending(x => x.score)
-                 .Take(n <= 0 ? 20 : n)
+                 .Take(n <= 0 ? 20 : Math.Clamp(n, 1, 100))
                  .ToList();
 }

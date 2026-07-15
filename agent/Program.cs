@@ -156,6 +156,9 @@ internal static class Program
             live.Apply(json);
             Console.WriteLine("[horus-agent] 已应用 config_update 热更新");
         };
+        // A3 防御性自检:capture_now handler 必须已注入,否则看板「点名抓图」会静默失效(服务端 pushed:true 但 Agent 不抓图)。
+        if (uplink.OnCaptureNow is null)
+            Console.Error.WriteLine("[horus-agent] 警告: capture_now 处理器未注入 → 看板点名抓图将静默失效");
         // 考试结束(在线推送 / 重连 hello 补发):留 5s 排空缓冲续传窗口,再停采回待命。
         uplink.OnExamEnded = () =>
         {

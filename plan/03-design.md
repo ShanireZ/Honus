@@ -13,6 +13,8 @@
 
 ## D1 〔P3〕`KIND_META` 缺 3 个 M5 标签 → 部分可疑项缺配色/中文，打破主题一致
 
+**状态（2026-07-15）**：✅ 已实施（随 01-U2 一并修）。`KIND_META` 增补 `screen_obscured`「屏幕遮挡」/`capability_degraded`「能力降级」/`watchdog_restart`「看门狗重启」三组标签，并补 `suspected_suspend`「疑似挂起」标签；严格沿用既有 `fg/bg/bd` 暗色取证配色范式。
+
 **证据**
 - `app.js:15-26` 的 `KIND_META` 缺 `screen_obscured / capability_degraded / watchdog_restart` 三标签；回退（`app.js:28`）用统一灰底 + 原始 kind 串。
 - 见 01-U2 同一条目（功能维度），此处强调**设计一致性**受损：同一张可疑队列里，10 类有专属配色、3 类退化为灰底机器串，视觉语言断裂。
@@ -23,6 +25,8 @@
 
 ## D2 〔P3〕健康信号与作弊线索视觉层级未区分（信息设计）
 
+**状态（2026-07-15）**：✅ 已实施（随 01-U3 方案 A）。看板以独立「采集健康」面板（冷色、只读、`source='health'`）呈现 M5 健康信号，与「可疑复核」（红/橙、可裁决、`source='suspicion'`）在颜色/位置/权重上明确分层；M5 kind 配色沿用 D1 暗金冷调，与违规橙红区分。
+
 **证据/影响**
 M5 健康信号与作弊线索共用同一渲染通道、同一张表（见 01-U3）。设计上应让「采集健康」与「违规嫌疑」在颜色/位置/权重上明显分层，否则监考员注意力被稀释。
 
@@ -31,6 +35,8 @@ M5 健康信号与作弊线索共用同一渲染通道、同一张表（见 01-U
 ---
 
 ## D3 〔P3〕窄屏断点覆盖不足，灯箱/抽屉移动宽度可用性未验证
+
+**状态（2026-07-15）**：✅ 已实施。`styles.css` 增加 `@media (max-width: 760px)` 断点：座位热力图网格缩为 `minmax(84px,1fr)` + gap 7px 防横向溢出；灯箱 `max-width:92vw` 可滚动；`#similarResults` `max-width:94vw` 横向滚动；`.panel__head` / `.topbar` `flex-wrap` 在小窗堆叠。
 
 **证据**
 - `styles.css` 仅 `@media (max-width: 1100px)` 一个主要断点（右栏堆叠）。
@@ -43,6 +49,8 @@ M5 健康信号与作弊线索共用同一渲染通道、同一张表（见 01-U
 ---
 
 ## D4 〔P3〕「按图搜图」不可用状态缺乏引导设计
+
+**状态（2026-07-15）**：✅ 已实施。`app.js` 灯箱在嵌入器未配时**保留禁用态「按图搜图」按钮**（`btn.hidden=!imageSearchEnabled; btn.disabled=!usable`），`title` 提示「按图搜图不可用:未部署 CLIP 模型(model.onnx)」；`searchSimilar` 对 `!state.imageSearchEnabled` 直接 toast 并返回。联动 05-M7：预检新增 `clip_model` 检查项，指明不可用原因。
 
 **证据**
 - `imageSearchEnabled`（`app.js:192` 默认 `false`）由 `/api/authmode` 下发（`Endpoints.cs:67`）；嵌入器未配（无 `model.onnx`）时按钮常隐。

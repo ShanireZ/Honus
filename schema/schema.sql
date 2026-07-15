@@ -103,15 +103,8 @@ CREATE TABLE IF NOT EXISTS logo_hits (
   created_at  REAL NOT NULL
 );
 
--- 图像向量 (CLIP) — sqlite-vec 虚拟表,做"按图搜图"相似检索 -----
--- 需先加载扩展:  .load ./vec0     (sqlite-vec)
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_images USING vec0(
-  image_id  TEXT PRIMARY KEY,
-  embedding FLOAT[512]
-);
-
--- 图像向量普通表(M3 实做·按图搜图)——规模小(单场几千图),C# 暴力余弦 KNN 就够,不依赖 sqlite-vec 原生扩展。
--- embedding = float32[dim] 小端字节。仅嵌证据/可疑图(省算力)。vec_images 虚表留作日后大规模检索余量。
+-- 图像向量普通表(M3 实做·按图搜图)——规模小(单场几千图),C# 暴力余弦 KNN,不依赖 sqlite-vec 原生扩展。
+-- embedding = float32[dim] 小端字节。仅嵌证据/可疑图(省算力)。
 CREATE TABLE IF NOT EXISTS image_embeddings (
   image_id    TEXT PRIMARY KEY,
   dim         INTEGER NOT NULL,
@@ -119,7 +112,7 @@ CREATE TABLE IF NOT EXISTS image_embeddings (
   embedded_at REAL NOT NULL
 );
 
--- 击键节奏(判题网页前端埋点上报) -----------------------------
+-- 击键节奏(外部判题后端经 KSK 旁路 POST /ingest/keystroke 写入；前端埋点已撤) -----------------------------
 CREATE TABLE IF NOT EXISTS keystroke_samples (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   exam_id       TEXT NOT NULL,

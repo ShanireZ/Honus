@@ -165,6 +165,32 @@ public class TopNTests
         Assert.Equal("near", top[0].id);      // 最相似在前
         Assert.Equal("far", top[1].id);
     }
+
+    [Fact]
+    public void 余弦下限过滤近正交帧()
+    {
+        var q = new float[] { 1, 0, 0 };
+        var corpus = new List<(string, float[])>
+        {
+            ("self", new float[] { 1, 0, 0 }),
+            ("near", new float[] { 0.9f, 0.1f, 0 }),
+            ("orth", new float[] { 0, 1, 0 }),   // 余弦 0
+        };
+        List<(string id, double score)> top = ImageSearchStore.TopN(q, corpus, 10, excludeId: "self", cosineFloor: 0.2);
+        Assert.DoesNotContain(top, t => t.id == "orth");   // 近正交被滤掉
+        Assert.Contains(top, t => t.id == "near");
+    }
+
+    [Fact]
+    public void topN上界钳制()
+    {
+        var q = new float[] { 1, 0, 0 };
+        var corpus = new List<(string, float[])>();
+        for (int i = 0; i < 200; i++) corpus.Add(("n" + i, new float[] { 1, 0, 0 }));
+        // cosineFloor=-1 全过;n=1000 → 钳到 100
+        List<(string id, double score)> top = ImageSearchStore.TopN(q, corpus, 1000, excludeId: "n0", cosineFloor: -1);
+        Assert.Equal(100, top.Count);
+    }
 }
 
 /// 端到端:两张相同字节图(不同 clientId)→ 嵌入 → 按图搜图返回余弦≈1 的相似帧。

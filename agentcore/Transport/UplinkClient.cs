@@ -30,6 +30,7 @@ public sealed class UplinkClient : IAsyncDisposable
     private const long SeqBlock = 256;                 // 每预留 256 个序号才落一次盘
 
     /// 监考员 capture_now → 触发一次抓图(Program 注入)。
+    /// 未注入 → 看板「点名抓图」返回 pushed:true 但 Agent 不抓图(静默失效),故 Program 注入后须保证非空(见 agent/Program.cs 启动断言)。
     public Action<string>? OnCaptureNow;
     /// 服务器下发新配置(热更新)。M1 仅回调,由 Program 决定如何应用。
     public Action<JsonElement>? OnConfigUpdate;

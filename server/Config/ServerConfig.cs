@@ -126,6 +126,9 @@ public sealed record ServerConfig
     public int EmbedDim { get; init; } = 512;
     /// 后台嵌入补扫间隔(分钟):拾回证据/可疑图里尚无 embedding 的。默认 5;≤0=关闭。
     public double EmbedBackstopMinutes { get; init; } = 5;
+    /// 按图搜图余弦下限:低于此分的帧视为无关(CLIP 余弦对不相关图常 ≈0),过滤掉避免噪声(B1)。
+    /// 默认 0.2(CLIP 经验值);设为 ≤0 则不过滤(退回旧行为)。
+    public double EmbedCosineFloor { get; init; } = 0.2;
     /// 本地 ONNX CLIP 图像编码器模型路径。**留空 = 约定名 `model.onnx`(在 DataDir 下)**——与 HF 仓
     /// Qdrant/clip-ViT-B-32-vision 原始文件名一致,下载后免改名;也可显式指定相对(按 DataDir)或绝对路径。
     public string? EmbedOnnxModelPath { get; init; }

@@ -15,6 +15,7 @@ public sealed class ImageEmbedService(
 {
     private readonly IImageEmbedder? embedder = sp.GetService<IImageEmbedder>();   // 嵌入器关时未注册 → null → no-op
 
+    // 嵌入器未注册(off/mock 未配)时为 false → 整服务 no-op;看板据此(经由 /api/authmode 的 imageSearchEnabled)决定「按图搜图」按钮显隐。
     public bool Enabled => embedder is { Enabled: true };
 
     protected override async Task ExecuteAsync(CancellationToken ct)

@@ -4,8 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Horus.Server.Data;
 
-/// 从内嵌资源读取权威 DDL(schema.sql)并应用。
-/// M1 剥离 sqlite-vec 的 vec0 虚表(需 vec0 扩展,属 M3),其余表照建。
+/// 从内嵌资源读取权威 DDL(schema.sql)并应用（sqlite-vec 虚表已从 DDL 移除，统一走普通 image_embeddings 表 + C# 暴力余弦）。
 public static class Schema
 {
     /// 按资源名后缀读取内嵌 DDL(如 "schema.sql" / "schema-archive.sql")。
@@ -22,9 +21,7 @@ public static class Schema
 
     public static void Apply(SqliteConnection conn)
     {
-        var kept = SplitStatements(LoadDdl())
-            .Where(st => !st.Contains("USING vec0", StringComparison.OrdinalIgnoreCase))  // M1 跳过 CLIP 向量虚表
-            .ToList();
+        var kept = SplitStatements(LoadDdl()).ToList();
 
         using SqliteCommand cmd = conn.CreateCommand();
         cmd.CommandText = string.Join(";\n", kept) + ";";

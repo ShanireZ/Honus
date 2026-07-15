@@ -874,6 +874,20 @@ body {
   }
 }
 
+/* 窄屏(手机/小窗):热力图更小单元格 + 灯箱更紧凑 + 面板头换行 */
+@media (max-width: 760px) {
+  .seat-grid {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 7px;
+    padding: 10px;
+  }
+  .lightbox { padding: 14px; }
+  .lightbox__img { max-width: 94vw; max-height: 80vh; }
+  #similarResults { max-width: 94vw; }
+  .panel__head { flex-wrap: wrap; gap: 8px; }
+  .topbar { flex-wrap: wrap; }
+}
+
 /* ============================================================
    白名单热更抽屉
    ============================================================ */

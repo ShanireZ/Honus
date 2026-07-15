@@ -70,7 +70,7 @@ public static class RiskModel
             case SignalType.ScreenshotObscured: return 60;   // 考中遮屏/黑帧 → 入可疑队列
             case SignalType.CapabilityDegraded: return 55;   // 采集能力被削弱(非管理员/信号源失败)→ 入队
             case SignalType.WatchdogRestart:    return 55;   // 采集进程曾被结束(规避取证)→ 入队
-            // suspected_suspend 只作看板健康提示,不自动入队(睡眠/锁屏在合法情形也会触发,避免噪声;仍进事件时间线)。
+            // suspected_suspend:风险 0,不计入作弊裁决;经「采集健康」面板呈现(与另三个 M5 信号同源),睡眠/锁屏等合法情形也提示监考员关注。
 
             default:                     return 0;   // window_focus / process_exit / heartbeat / screenshot / suspected_suspend
         }

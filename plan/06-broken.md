@@ -19,12 +19,10 @@
 ---
 
 ## X1 〔P3·潜在〕`capture_now` 若 Agent 端 `OnCaptureNow` 未注入 → 静默失效
-- `UplinkClient.OnCaptureNow` 为可空 `Action?`（`UplinkClient.cs:33`）。若初始化顺序异常导致未注入，服务端返回 `pushed:true` 但 Agent 不抓图。
-- 属**潜在失效**（非已确认），修复见 02-A3（启动期断言）。
+**状态（2026-07-15）**：✅ 已实施（见 02-A3）。`agent/Program.cs` 启动断言 + `UplinkClient.OnCaptureNow` 注释点明，未注入即告警。
 
 ## X2 〔P3·潜在〕CLIP 模型缺失时「按图搜图」整链路不可用且无引导
-- 非代码 bug（`imageSearchEnabled=false` 正确隐藏按钮），但部署方若忘记放 `model.onnx`，该能力静默消失、无预检提示。
-- 修复见 05-M7（预检加 CLIP 模型检查）+ 03-D4（禁用态引导）。
+**状态（2026-07-15）**：✅ 已实施（见 05-M7 + 03-D4）。预检 `clip_model` 检查 + 灯箱禁用态「按图搜图」按钮 + tooltip 提示「未部署 CLIP 模型(model.onnx)」。
 
 ---
 

@@ -7,6 +7,8 @@
 
 ## B1 〔P2〕`ImageSearchStore.TopN` 近正交图不过滤，检索质量下降
 
+**状态（2026-07-15）**：✅ 已实施。`ServerConfig` 新增 `EmbedCosineFloor`（默认 0.2）；`ImageSearchStore.TopN` 改为 `.Where(x => x.score >= cfg.EmbedCosineFloor)`（由端点传入 `cfg.EmbedCosineFloor`），近正交（score≈0）帧被过滤；`server.config.sample.json` 同步暴露该配置与注释。
+
 **证据**
 - `server/Analysis/Search/ImageSearchStore.cs:48-54`：
   ```csharp
@@ -26,6 +28,8 @@
 
 ## B2 〔P3〕`search-image` 的 `topN` 仅做下界兜底，无上界 clamp
 
+**状态（2026-07-15）**：✅ 已实施（随 B1）。`Endpoints.cs` 端点 `topN = Math.Clamp((int?)body?["topN"] ?? 20, 1, 100)`；`ImageSearchStore.TopN` 内部 `Math.Clamp(n, 1, 100)` 双保险，杜绝超大 `topN` 输入。
+
 **证据**
 - `Endpoints.cs:77` `int topN = (int?)body?["topN"] ?? 20;`；`ImageSearchStore.TopN` 仅 `n <= 0 ? 20 : n`（`ImageSearchStore.cs:53`）。
 - 传入超大 `topN`（如 100000）虽因语料仅单场几千而实际影响有限，但属未防御的输入。
@@ -36,6 +40,8 @@
 
 ## B3 〔P3〕M5 kind 映射与风险分无单测（潜在 bug 源）
 
+**状态（2026-07-15）**：✅ 已实施。新增 `tests/SuspicionTests.cs`（3 项理论）：`Suspicion.KindFor` 全分支（含 `SuspectedSuspend→"suspected_suspend"`、`WindowFocus→"suspect"` 兜底）、`RiskModel.Derive` M5 分值（60/55/55/0）、`SourceForKind`（`health` vs `suspicion`）。把「新增 kind 必补前端标签」变成可断言契约（联动 08-T4）。
+
 **证据**
 - `Suspicion.KindFor`（`Suspicion.cs:35-37`）对 M5 三类映射、`RiskModel` 中 M5 分值（`ScreenshotObscured=60 / CapabilityDegraded=55 / WatchdogRestart=55`，`suspected_suspend=0`）在 `tests/` 中**0 文件**覆盖（关键字 `ScreenObscured` / `Suspicion` 命中 0）。
 - 一旦这些值或映射被改（如新增第 4 个健康信号、改分值），无测试报警，且会直接连累 01-U2 的渲染（缺标签→raw 串）。
@@ -45,6 +51,8 @@
 ---
 
 ## B4 〔P3〕`capture_now` 端到端无测试（潜在回归）
+
+**状态（2026-07-15）**：✅ 已实施。新增 `tests/CaptureTests.cs`（2 项）：在线 Agent `POST /api/agents/ag-A07/capture` → `pushed:true` 且经 WS 收到 `capture_now` 帧；不在线 Agent → `pushed:false`。用 `app.ConnectEventsAsync` + `Ws` 助手断言。
 
 **证据**：`tests/` 中 `capture_now` 仅 1 处弱引用，无「服务端 push → Agent 抓图 → 图片入证据流」的端到端断言（见 05-缺失）。
 

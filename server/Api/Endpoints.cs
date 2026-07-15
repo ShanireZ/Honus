@@ -74,7 +74,7 @@ public static class Endpoints
             try { body = await JsonNode.ParseAsync(ctx.Request.Body); }
             catch (JsonException) { return Results.Json(new { ok = false, error = "bad_json" }, statusCode: 400); }
             string queryImageId = (string?)body?["imageId"] ?? "";
-            int topN = (int?)body?["topN"] ?? 20;
+            int topN = Math.Clamp((int?)body?["topN"] ?? 20, 1, 100);   // B2:上界钳制,防超大 topN 拖垮
             if (queryImageId.Length == 0) return Results.Json(new { ok = false, error = "missing_image_id" }, statusCode: 400);
 
             // 查询图向量:已嵌入直接取;否则即时补嵌(嵌入器关则失败)。
@@ -83,7 +83,7 @@ public static class Endpoints
                 return Results.Json(new { ok = false, error = embedService.Enabled ? "query_not_embeddable" : "search_disabled" }, statusCode: 400);
 
             List<(string id, float[] vec)> corpus = searchStore.GetExam(examId);
-            List<(string id, double score)> top = ImageSearchStore.TopN(q, corpus, topN, excludeId: queryImageId);
+            List<(string id, double score)> top = ImageSearchStore.TopN(q, corpus, topN, excludeId: queryImageId, cosineFloor: cfg.EmbedCosineFloor);
             return Results.Json(new
             {
                 ok = true,
@@ -215,6 +215,22 @@ public static class Endpoints
                     $"both 灰度期:{onlineOidc}/{onlineTotal} 在线座位已走 OIDC,仍有 {pskSeats} 座位走 PSK → 未全部迁移,勿切 oidc(切了这些座位会被拒)");
                 else Add("migration", "ok", "迁移状态", $"both 灰度期:全部 {onlineTotal} 在线座位已走 OIDC → 可择机切 oidc 强制");
             }
+
+            // 7) CLIP 模型(按图搜图依赖):onnx provider 需本地模型文件;远程 provider 无本地文件。
+            if (!cfg.EmbedEnabled)
+                Add("clip_model", "ok", "CLIP 模型", "按图搜图未启用(未配 embedProvider)→ 功能关闭");
+            else if (string.Equals(cfg.EmbedProvider, "onnx", StringComparison.OrdinalIgnoreCase))
+            {
+                string mp = string.IsNullOrWhiteSpace(cfg.EmbedOnnxModelPath)
+                    ? System.IO.Path.Combine(cfg.DataDir, "model.onnx")
+                    : (System.IO.Path.IsPathRooted(cfg.EmbedOnnxModelPath) ? cfg.EmbedOnnxModelPath : System.IO.Path.Combine(cfg.DataDir, cfg.EmbedOnnxModelPath));
+                if (System.IO.File.Exists(mp))
+                    Add("clip_model", "ok", "CLIP 模型", $"onnx 模型存在:{mp}");
+                else
+                    Add("clip_model", "fail", "CLIP 模型", $"embedProvider=onnx 但模型文件缺失:{mp}");
+            }
+            else
+                Add("clip_model", "ok", "CLIP 模型", $"provider={cfg.EmbedProvider}(远程端点,无本地模型文件)");
 
             return Results.Json(new { ok = fails == 0, fails, warns, checks, activeExams, migration = new { onlineTotal, onlineOidc } });
         });

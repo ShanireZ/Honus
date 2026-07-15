@@ -823,7 +823,7 @@ public class ConfigPersistenceTests
     }
 }
 
-/// Schema 形状:vec0 虚表被跳过(否则 sqlite-vec 未加载会建表失败起不来)、核心表齐全、心跳 PK 含 seat 维。
+/// Schema 形状:vec_images 虚表已从 schema 移除(不依赖 sqlite-vec 原生扩展)、核心表齐全、心跳 PK 含 seat 维。
 public class SchemaShapeTests
 {
     [Fact]
@@ -839,7 +839,7 @@ public class SchemaShapeTests
             while (r.Read()) set.Add(r.GetString(0));
             return set;
         });
-        Assert.DoesNotContain("vec_images", tables);   // sqlite-vec 未加载 → 跳过,不致 Apply 失败
+        Assert.DoesNotContain("vec_images", tables);   // vec_images 虚表已从 schema.sql 移除,不依赖 sqlite-vec
         foreach (string t in new[] { "exams", "seats", "events", "images", "ocr_results", "logo_hits",
             "keystroke_samples", "suspicious_queue", "agent_heartbeats", "exam_config" })
             Assert.Contains(t, tables);

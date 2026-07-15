@@ -5,6 +5,8 @@
 ---
 
 ## F1 〔P3〕`architecture-v0.2.md` 内部对 sqlite-vec 表述不一致
+
+**状态（2026-07-15）**：✅ 已实施。D9 组件表改为「SQLite + 文件系统（图像向量存普通 image_embeddings 表 + C# 暴力余弦检索）」；§7 数据流「SQLite + 文件（图像向量普通表 + C# 暴力余弦）」；§8 去掉「`vec_images` 虚表留大规模余量」。联动：`docs/api-contract-m1.md` §4 表（含 `image_embeddings` 行）与 §4.1 关系（`→ image_embeddings`）同步修正。
 **证据**
 - D9 组件表（`architecture-v0.2.md:23`）：`存储后端 | SQLite + 文件系统 + sqlite-vec`。
 - 数据流感慨图（`architecture-v0.2.md:37`）：`接收·校验·落库(SQLite + 文件 + sqlite-vec)`。
@@ -15,6 +17,8 @@
 **修复**：D9 与 §7 数据流删除 sqlite-vec，统一为「SQLite + 文件系统 +（预留）C# 暴力余弦检索」。
 
 ## F2 〔P3〕`schema.sql` 仍含 `vec_images` 虚表 DDL，与「未用 sqlite-vec」实做冲突
+
+**状态（2026-07-15）**：✅ 已实施（见 02-A1）。`vec_images USING vec0` 死 DDL 已从 `schema.sql` 删除，`Schema.cs` 移除对应运行时剥离；`vec_images` 虚表彻底不存在。
 **证据**
 - `schema/schema.sql:106-111` 声明 `vec_images USING vec0`；`schema.sql:113-120` 注释自承「M3 实做走普通表 + C# 暴力余弦」。
 - `server/Data/Schema.cs:26` 运行时 `Where(!Contains("USING vec0"))` 剥离才不崩。
@@ -24,6 +28,8 @@
 **修复**：见 02-A1（删 DDL 或显式标注 + CI 断言）。
 
 ## F3 〔P3〕`schema.sql:122` 注释「判题网页前端埋点上报」与实现不符
+
+**状态（2026-07-15）**：✅ 已实施（见 08-T1）。`keystroke_samples` 注释改为「击键节奏(外部判题后端经 KSK 旁路 POST /ingest/keystroke 写入；前端埋点已撤)」。
 **证据**
 - `schema.sql:122`：`-- 击键节奏(判题网页前端埋点上报)`。
 - 实际写入路径：`server/Ingest/KeystrokeIngest.cs`——外部判题后端经 `POST /ingest/keystroke` + `X-Horus-KSig`（KSK 会话签名）写入；前端埋点已撤（README:34 / AGENTS.md「待做：击键前端埋点已撤」）。
@@ -47,6 +53,8 @@
 **状态（2026-07-15）**：✅ 已实施。F4 的两条修复均随 01-U2（补标签）/ 01-U3（选方案 A：`source` 列 + 独立「采集健康」面板）落地。`suspected_suspend`（05-M8）仍按原设计 `RiskModel=0` 仅作健康提示、不入队，本次未改（属另一待办，非本决策范围）。
 
 ## F5 〔P3〕`README.md:34` 称「225 项测试全绿」需与当前实际对齐
+
+**状态（2026-07-15）**：✅ 已实施。`README.md` 状态行改为「测试持续全绿·见 dotnet test 实际输出」；`server/README.md` 的测试说明改为「持续全绿·见 CI 输出」，彻底去掉硬编码计数（随测试增长自动对齐）。
 **证据**：README / AGENTS.md 多处写「225 项测试全绿」「测试数 130→…」。随 M3/M4/M5 增改，测试数已变化，建议在 CI 或文档里用变量/动态数字，避免硬编码过时计数漂移至失真。
 
 **修复**：文档改为「测试持续全绿（见 CI 报告）」或引用 `dotnet test` 实际输出，不硬编码具体数字。
