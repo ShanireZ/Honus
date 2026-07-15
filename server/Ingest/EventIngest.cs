@@ -265,15 +265,16 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
         catch { payload = default; }
 
         string kind = Suspicion.KindFor(type, payload);
+        string source = Suspicion.SourceForKind(kind);   // M5 健康信号→health(只读面板)；其余→suspicion(可裁决)
         var refs = new List<string> { $"event:{eventId}" };
         if (evidenceImageId is not null) refs.Add($"image:{evidenceImageId}");
         string refsJson = JsonSerializer.Serialize(refs);
 
         using SqliteCommand c = conn.Cmd(
-            @"INSERT INTO suspicious_queue (exam_id,seat_id,ts,kind,score,status,refs,note)
-              VALUES (@e,@s,@ts,@k,@sc,'pending',@refs,@note)",
+            @"INSERT INTO suspicious_queue (exam_id,seat_id,ts,kind,score,status,refs,note,source)
+              VALUES (@e,@s,@ts,@k,@sc,'pending',@refs,@note,@src)",
             ("@e", examId), ("@s", seatId), ("@ts", ts), ("@k", kind), ("@sc", score),
-            ("@refs", refsJson), ("@note", note));
+            ("@refs", refsJson), ("@note", note), ("@src", source));
         c.ExecuteNonQuery();
     }
 

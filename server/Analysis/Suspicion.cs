@@ -39,6 +39,14 @@ public static class Suspicion
         }
     }
 
+    /// 健康信号(采集端硬化三件套)入队时归属 source='health',仅在「采集健康」面板呈现、不可裁决;
+    /// 其余作弊线索默认 source='suspicion'。判据与 KindFor 的三分支保持一致,避免漂移。
+    public static string SourceForKind(string kind)
+    {
+        return kind is "screen_obscured" or "capability_degraded" or "watchdog_restart"
+            ? "health" : "suspicion";
+    }
+
     private static string HostOf(string url)
     {
         // 解析失败返回空串(与 RiskModel.HostOf 一致):不拿整条 URL 去撞黑名单标签,免 path/query 假阳性(F5)。

@@ -9,7 +9,7 @@
 | 功能 | 端点/代码 | 前端 | 结论 |
 |---|---|---|---|
 | 按图搜图 | `Endpoints.cs:71` `POST /api/exams/{id}/search-image` | `app.js:217` 取 `imageSearchEnabled`、`app.js:1125` 显隐、`app.js:1141` `searchSimilar` | **可用**（嵌入器关时按钮隐藏，行为正确） |
-| 点名抓图 | `Endpoints.cs:612` + `UplinkClient.cs:176` + `agent/Program.cs:153` | 无按钮 | **后端+采集端可用，仅缺 UI**（归 01-U1 / 05-M1，非失效） |
+| 点名抓图 | `Endpoints.cs:612` + `UplinkClient.cs:176` + `agent/Program.cs:153` | 座位抽屉「点名抓图」按钮（`app.js`） | **可用**（UI 已补齐，归 01-U1，2026-07-15 已实施） |
 | 哈希链复验 | `EventIngest` + `integrity` 端点 | — | 可用（有测试） |
 | 归档作业 | `ArchiveService` | — | 可用（有测试） |
 | OIDC / RBAC | `IngestAuth` / `admin_sessions` | 登录门 | 可用 |
@@ -30,4 +30,4 @@
 
 ## 优先级建议
 - 本维度**无 P0–P2 项**。仅 X1/X2 两个 P3 防御性项，随 02-A3 / 05-M7 / 03-D4 一并处理即可。
-- 若你确认「点名抓图按钮」是**有意不暴露**到看板，则 01-U1 应降级为「按预期行为」，不属于缺失也不属于失效。
+- ~~「点名抓图按钮是否有意不暴露」~~ → **已确认暴露到看板**（2026-07-15 实施），01-U1 维持「缺失→已修」，非「按预期行为」。

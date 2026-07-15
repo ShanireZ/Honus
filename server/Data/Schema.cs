@@ -61,6 +61,7 @@ public static class Schema
         AddColumnIfMissing(conn, "images", "analysis_state", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(conn, "images", "analysis_attempts", "INTEGER NOT NULL DEFAULT 0");
         BackfillAnalysisState(conn);
+        AddColumnIfMissing(conn, "suspicious_queue", "source", "TEXT NOT NULL DEFAULT 'suspicion'"); // M5:区分可裁决作弊线索(默认)与只读健康告警
         MigrateHeartbeatPk(conn);                                       // 心跳 PK 补 exam/seat 维(旧库重建·心跳短暂可弃)
     }
 

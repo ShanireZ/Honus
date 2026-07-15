@@ -149,8 +149,12 @@ public class HealthSignalServerTests
 
         JsonElement events = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/events?seatId=A07");
         Assert.Equal(60, events[0].GetProperty("serverRisk").GetInt32());
+        // 健康信号独立成「采集健康」面板:入队(source='health')→进 /health,不再进可裁决的 /suspicious。
+        JsonElement health = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/health");
+        Assert.Equal(1, health.GetArrayLength());
+        Assert.Equal("screen_obscured", health[0].GetProperty("kind").GetString());
         JsonElement susp = await http.GetFromJsonAsync<JsonElement>("/api/exams/E1/suspicious");
-        Assert.Equal(1, susp.GetArrayLength());
+        Assert.Equal(0, susp.GetArrayLength());
     }
 
     [Fact]

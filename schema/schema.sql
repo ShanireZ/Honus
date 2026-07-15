@@ -144,7 +144,8 @@ CREATE TABLE IF NOT EXISTS suspicious_queue (
   refs        TEXT,                                   -- JSON: 关联 events.id / images.image_id
   reviewer    TEXT,
   decided_at  REAL,
-  note        TEXT
+  note        TEXT,
+  source      TEXT NOT NULL DEFAULT 'suspicion'  -- suspicion(作弊线索·可裁决) | health(采集端健康告警·仅提示·不可裁决)
 );
 CREATE INDEX IF NOT EXISTS ix_susp_status ON suspicious_queue(exam_id, status, score);
 

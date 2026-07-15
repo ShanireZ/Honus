@@ -22,7 +22,11 @@
     browser_unreadable: { label: "浏览器不可读", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" },
     non_whitelist_web:  { label: "非白名单网站", fg: "#ffb3c1", bg: "#3a1520", bd: "#b0455f" },
     remote_tool:        { label: "远控工具",     fg: "#ff9a9d", bg: "#3a1315", bd: "#c14045" },
-    suspect:            { label: "可疑",         fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" }
+    suspect:            { label: "可疑",         fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" },
+    // M5 采集健康告警(只读,不计入作弊裁决):与 Suspicion.KindFor 三分支对应
+    screen_obscured:    { label: "屏幕遮挡",     fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" },
+    capability_degraded:{ label: "能力降级",     fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" },
+    watchdog_restart:   { label: "看门狗重启",   fg: "#f9e2af", bg: "#3a2f0a", bd: "#a9741f" }
   };
   function kindMeta(kind) {
     return KIND_META[kind] || { label: kind || "未知", fg: "#c2c9d8", bg: "#242a37", bd: "#4a5163" };
@@ -184,6 +188,8 @@
     seats: [],
     suspicious: [],
     queueStatus: "pending",   // 队列过滤
+    queueMode: "suspicion",   // 队列视图:suspicion(可疑复核)|health(采集健康)
+    health: [],               // 采集健康列表(source='health')
     autoRefresh: true,
     pollTimer: null,
     inflight: false,          // 防止轮询叠加
@@ -201,6 +207,7 @@
   function init() {
     bindTopbar();
     bindQueueFilter();
+    bindQueueTabs();
     bindDrawer();
     bindLightbox();
     bindLoginGate();
@@ -434,6 +441,27 @@
     });
   }
 
+  // 视图切换:可疑复核 <-> 采集健康。health 模式隐藏状态过滤 chips(只读告警,无需裁决状态)。
+  function bindQueueTabs() {
+    $("#queueTabs").addEventListener("click", function (e) {
+      var btn = e.target.closest(".tab");
+      if (!btn) return;
+      var mode = btn.getAttribute("data-mode");
+      if (mode === state.queueMode) return;
+      state.queueMode = mode;
+      $("#queueTabs").querySelectorAll(".tab").forEach(function (t) {
+        var on = (t === btn);
+        t.classList.toggle("is-active", on);
+        t.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      // health 模式不需要状态过滤(只读告警);suspicion 模式恢复
+      $("#queueFilter").hidden = (mode === "health");
+      if (mode === "health") loadHealth();
+      else loadSuspicious();
+      renderQueue();
+    });
+  }
+
   function bindDrawer() {
     $("#drawerClose").addEventListener("click", closeDrawer);
     $("#drawerScrim").addEventListener("click", closeDrawer);
@@ -538,14 +566,22 @@
     state.inflight = true;
 
     var examId = state.currentExamId;
-    Promise.all([
+    var calls = [
       apiGet("/api/exams/" + encodeURIComponent(examId) + "/seats"),
       apiGet("/api/exams/" + encodeURIComponent(examId) +
         "/suspicious?status=" + encodeURIComponent(state.queueStatus))
-    ]).then(function (res) {
+    ];
+    // 采集健康视图下,额外拉取 health 列表,保持面板实时
+    if (state.queueMode === "health") {
+      calls.push(apiGet("/api/exams/" + encodeURIComponent(examId) + "/health"));
+    }
+    Promise.all(calls).then(function (res) {
       if (examId !== state.currentExamId) return;  // 期间已切换
       state.seats = Array.isArray(res[0]) ? res[0] : [];
       state.suspicious = Array.isArray(res[1]) ? res[1] : [];
+      if (state.queueMode === "health" && res[2]) {
+        state.health = Array.isArray(res[2]) ? res[2] : [];
+      }
       renderSeats();
       renderQueue();
       updateOverview();
@@ -574,6 +610,29 @@
         if (err && err.isAuth) return;   // 401 已弹登录门
         showToast("加载可疑队列失败：" + err.message);
       });
+  }
+
+  // 采集健康(只读):拉取 source='health' 的告警列表
+  function loadHealth() {
+    if (!state.currentExamId) return;
+    var examId = state.currentExamId;
+    apiGet("/api/exams/" + encodeURIComponent(examId) + "/health")
+      .then(function (list) {
+        if (examId !== state.currentExamId) return;
+        state.health = Array.isArray(list) ? list : [];
+        renderQueue();
+      })
+      .catch(function (err) {
+        if (err && err.isAuth) return;   // 401 已弹登录门
+        showToast("加载采集健康失败：" + err.message);
+      });
+  }
+
+  // 采集健康按时间倒序
+  function sortedHealth() {
+    return state.health.slice().sort(function (a, b) {
+      return (b.ts || 0) - (a.ts || 0);
+    });
   }
 
   /* ============================================================
@@ -683,13 +742,21 @@
     });
   }
 
+  // 队列渲染:按当前视图(suspicion/health)分派
   function renderQueue() {
+    if (state.queueMode === "health") renderHealth();
+    else renderSuspicionQueue();
+  }
+
+  // 可疑复核队列(可裁决)
+  function renderSuspicionQueue() {
     var body = $("#queueBody");
     var empty = $("#queueEmpty");
     var list = sortedSuspicious();
     if (!list.length) {
       body.innerHTML = "";
       empty.hidden = false;
+      empty.textContent = "暂无可疑记录";
       return;
     }
     empty.hidden = true;
@@ -712,6 +779,42 @@
           esc(statusZh) + "</span></td>";
 
       tr.addEventListener("click", function () { openSuspiciousDrawer(item); });
+      body.appendChild(tr);
+    });
+  }
+
+  // 采集健康队列(只读告警;点击行跳转该座位详情,可点名抓图)
+  function renderHealth() {
+    var body = $("#queueBody");
+    var empty = $("#queueEmpty");
+    var list = sortedHealth();
+    if (!list.length) {
+      body.innerHTML = "";
+      empty.hidden = false;
+      empty.textContent = "本场暂无采集健康告警";
+      return;
+    }
+    empty.hidden = true;
+    body.innerHTML = "";
+
+    list.forEach(function (item) {
+      var m = kindMeta(item.kind);
+      var seat = state.seats.filter(function (s) { return s.seatId === item.seatId; })[0];
+      var tr = document.createElement("tr");
+
+      tr.innerHTML =
+        '<td class="seat-cell">' + esc(dash(item.seatId)) + "</td>" +
+        '<td><span class="kind-tag" style="color:' + m.fg +
+          ";background:" + m.bg + ";border-color:" + m.bd + '">' +
+          esc(m.label) + "</span></td>" +
+        '<td class="num">' + dash(item.score) + "</td>" +
+        "<td>" + fmtTime(item.ts) + "</td>" +
+        '<td><span class="status-tag" style="color:#f9e2af;background:rgba(249,226,175,.12);border-color:#a9741f">健康告警</span></td>';
+
+      tr.addEventListener("click", function () {
+        if (seat) openSeatDrawer(seat);
+        else showToast("未找到座位 " + item.seatId + " 的实时信息");
+      });
       body.appendChild(tr);
     });
   }
@@ -969,7 +1072,16 @@
         "<dt>战力</dt><dd class='mono'>" + dash(id.combatPower) + "</dd>"
       ) : "";
 
+    var canCapture = !!(s.online && s.agentId);
+    var actionBar = canCapture
+      ? '<div class="drawer-actions">' +
+          '<button type="button" class="btn btn--warn" id="captureBtn">点名抓图</button>' +
+          '<span class="drawer-actions__hint">向该座位 Agent 推送一次立即截屏指令</span>' +
+        '</div>'
+      : "";
+
     body.innerHTML =
+      actionBar +
       '<dl class="dl">' +
         "<dt>座位</dt><dd class='mono'>" + esc(dash(s.seatId)) + "</dd>" +
         "<dt>姓名</dt><dd>" + esc(dash(s.displayName)) + "</dd>" +
@@ -993,6 +1105,10 @@
       '<div class="loading" id="tlLoading">加载事件中…</div>' +
       '<div class="timeline" id="timeline"></div>';
 
+    // 点名抓图:仅在线且有 agentId 的座位显示按钮(后端 D2:POST /api/agents/{agentId}/capture)
+    var capBtn = $("#captureBtn");
+    if (capBtn) capBtn.addEventListener("click", function () { captureNow(s.agentId); });
+
     // 拉取该座位事件（limit=200，按 id 倒序，最新在前）
     var examId = state.currentExamId;
     apiGet("/api/exams/" + encodeURIComponent(examId) +
@@ -1005,6 +1121,22 @@
         if (err && err.isAuth) return;   // 401 已弹登录门（抽屉已被清屏关闭）
         var l = $("#tlLoading");
         if (l) l.textContent = "事件加载失败：" + err.message;
+      });
+  }
+
+  // 监考员点名抓图:向后端推 capture_now,toast 推送结果(后端 D2 已实现对在线 Agent 抓一张)
+  function captureNow(agentId) {
+    apiPost("/api/agents/" + encodeURIComponent(agentId) + "/capture", { reason: "proctor_call" })
+      .then(function (r) {
+        if (r && r.pushed === true) {
+          showToast("已向 " + agentId + " 推送点名抓图指令，稍后查看证据图");
+        } else {
+          showToast("该座位 Agent 不在线，无法抓图");
+        }
+      })
+      .catch(function (err) {
+        if (err && err.isAuth) return;   // 401 已弹登录门
+        showToast("点名抓图失败：" + err.message);
       });
   }
 
@@ -1248,6 +1380,19 @@
       exam_2026_ds_makeup: []
     },
 
+    // 按 examId 索引的采集健康告警(source='health',只读;M5 三件套)
+    health: {
+      exam_2026_algo_final: [
+        { id: "hlth_1", seatId: "A-03", ts: NOW - 35, kind: "watchdog_restart", score: 0,
+          status: "pending", refs: ["event:5455"], reviewer: null, decidedAt: null, note: "采集进程看门狗重启，已自动恢复" },
+        { id: "hlth_2", seatId: "A-06", ts: NOW - 22, kind: "capability_degraded", score: 0,
+          status: "pending", refs: [], reviewer: null, decidedAt: null, note: "截图能力降级（窗口最小化为不可读）" },
+        { id: "hlth_3", seatId: "A-02", ts: NOW - 70, kind: "screen_obscured", score: 0,
+          status: "pending", refs: [], reviewer: null, decidedAt: null, note: "屏幕被遮挡，无法截图" }
+      ],
+      exam_2026_ds_makeup: []
+    },
+
     // 按 seatId 索引的事件（最新在前）
     events: {
       "A-03": [
@@ -1331,6 +1476,12 @@
           return;
         }
 
+        var mHealth = path.match(/^\/api\/exams\/([^/]+)\/health$/);
+        if (mHealth) {
+          resolve(MOCK.health[decodeURIComponent(mHealth[1])] || []);
+          return;
+        }
+
         var mEv = path.match(/^\/api\/exams\/([^/]+)\/events/);
         if (mEv) {
           var sp2 = new URLSearchParams(path.split("?")[1] || "");
@@ -1347,6 +1498,13 @@
   function mockPost(path, body) {
     return new Promise(function (resolve) {
       setTimeout(function () {
+        // 点名抓图(D2):mock 下演示视为在线、可推送
+        var mCap = path.match(/^\/api\/agents\/([^/]+)\/capture$/);
+        if (mCap) {
+          var aid = decodeURIComponent(mCap[1]);
+          resolve({ ok: true, agentId: aid, pushed: true });
+          return;
+        }
         var m = path.match(/^\/api\/suspicious\/([^/]+)\/decide$/);
         if (!m) { resolve({ ok: false }); return; }
         var id = decodeURIComponent(m[1]);

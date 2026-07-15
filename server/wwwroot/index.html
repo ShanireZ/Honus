@@ -97,16 +97,23 @@
       <div class="empty" id="seatEmpty" hidden>暂无座位，等待 Agent 上报</div>
     </section>
 
-    <!-- 右：可疑复核队列 -->
+    <!-- 右：复核队列 + 采集健康 -->
     <section class="panel panel--queue">
       <div class="panel__head">
-        <h2 class="panel__title">可疑复核队列</h2>
-        <div class="queue-filter" id="queueFilter" role="tablist" aria-label="状态过滤">
-          <button class="chip is-active" data-status="pending" role="tab">待复核</button>
-          <button class="chip" data-status="reviewing" role="tab">复核中</button>
-          <button class="chip" data-status="confirmed" role="tab">已确认</button>
-          <button class="chip" data-status="dismissed" role="tab">已驳回</button>
-          <button class="chip" data-status="all" role="tab">全部</button>
+        <h2 class="panel__title">复核与采集健康</h2>
+        <div class="queue-head-controls">
+          <!-- 视图切换：可疑复核(可裁决) | 采集健康(只读告警) -->
+          <div class="panel__tabs" id="queueTabs" role="tablist" aria-label="队列视图">
+            <button class="tab is-active" data-mode="suspicion" role="tab" aria-selected="true">可疑复核</button>
+            <button class="tab" data-mode="health" role="tab" aria-selected="false">采集健康</button>
+          </div>
+          <div class="queue-filter" id="queueFilter" role="tablist" aria-label="状态过滤">
+            <button class="chip is-active" data-status="pending" role="tab">待复核</button>
+            <button class="chip" data-status="reviewing" role="tab">复核中</button>
+            <button class="chip" data-status="confirmed" role="tab">已确认</button>
+            <button class="chip" data-status="dismissed" role="tab">已驳回</button>
+            <button class="chip" data-status="all" role="tab">全部</button>
+          </div>
         </div>
       </div>
       <div class="queue-wrap">

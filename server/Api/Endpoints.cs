@@ -278,7 +278,7 @@ public static class Endpoints
                         (SELECT MAX(ts) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id),
                         (SELECT COALESCE(MAX(MAX(e.risk, COALESCE(e.server_risk,0))),0) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id AND e.ts>=@rc),
                         (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id),
-                        (SELECT COUNT(*) FROM suspicious_queue q WHERE q.exam_id=s.exam_id AND q.seat_id=s.seat_id AND q.status='pending'),
+                        (SELECT COUNT(*) FROM suspicious_queue q WHERE q.exam_id=s.exam_id AND q.seat_id=s.seat_id AND q.status='pending' AND q.source='suspicion'),
                         sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power, sess.user_type,
                         (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id
                            AND e.type IN ('watchdog_restart','suspected_suspend','screenshot_obscured','capability_degraded'))
@@ -333,21 +333,54 @@ public static class Endpoints
             });
         });
 
-        // ---- 可疑队列 ----
-        app.MapGet("/api/exams/{examId}/suspicious", (string examId, string? status) =>
+        // ---- 可疑队列（默认只看可裁决的 source='suspicion'；采集健康告警走独立 /health） ----
+        app.MapGet("/api/exams/{examId}/suspicious", (string examId, string? status, string? source) =>
         {
             string filter = string.IsNullOrEmpty(status) ? "pending" : status;
+            string src = string.IsNullOrEmpty(source) ? "suspicion" : source;
             return db.Read(conn =>
             {
                 var list = new List<object>();
                 string sql = @"SELECT id,seat_id,ts,kind,score,status,refs,reviewer,decided_at,note
-                               FROM suspicious_queue WHERE exam_id=@e";
+                               FROM suspicious_queue WHERE exam_id=@e AND source=@src";
                 if (filter != "all") sql += " AND status=@st";
                 sql += " ORDER BY score DESC, ts DESC LIMIT 500";
 
-                using SqliteCommand c = filter != "all"
-                    ? conn.Cmd(sql, ("@e", examId), ("@st", filter))
-                    : conn.Cmd(sql, ("@e", examId));
+                var ps = new List<(string, object?)> { ("@e", examId), ("@src", src) };
+                if (filter != "all") ps.Add(("@st", filter));
+                using SqliteCommand c = conn.Cmd(sql, ps.ToArray());
+                using SqliteDataReader r = c.ExecuteReader();
+                while (r.Read())
+                {
+                    list.Add(new
+                    {
+                        id = r.GetInt64(0),
+                        seatId = r.GetString(1),
+                        ts = r.GetDouble(2),
+                        kind = r.GetString(3),
+                        score = r.GetInt32(4),
+                        status = r.GetString(5),
+                        refs = ParseNode(NullStr(r, 6)),
+                        reviewer = NullStr(r, 7),
+                        decidedAt = NullDouble(r, 8),
+                        note = NullStr(r, 9),
+                    });
+                }
+                return Results.Json(list);
+            });
+        });
+
+        // ---- 采集健康（source='health' 的采集端健康告警：屏幕遮挡/能力降级/看门狗重启；仅提示、不可裁决） ----
+        app.MapGet("/api/exams/{examId}/health", (string examId) =>
+        {
+            return db.Read(conn =>
+            {
+                var list = new List<object>();
+                using SqliteCommand c = conn.Cmd(
+                    @"SELECT id,seat_id,ts,kind,score,status,refs,reviewer,decided_at,note
+                      FROM suspicious_queue WHERE exam_id=@e AND source='health'
+                      ORDER BY ts DESC LIMIT 500",
+                    ("@e", examId));
                 using SqliteDataReader r = c.ExecuteReader();
                 while (r.Read())
                 {
@@ -646,6 +679,13 @@ public static class Endpoints
 
             return db.Locked(conn =>
             {
+                // 采集健康告警(source='health')只读、不可裁决：拦截误调,保持「采集健康」面板与作弊裁决解耦。
+                using (SqliteCommand chk = conn.Cmd(
+                    @"SELECT 1 FROM suspicious_queue WHERE id=@id AND source='health'", ("@id", id)))
+                {
+                    if (chk.ExecuteScalar() is not null)
+                        return Results.BadRequest(new { error = "health items are read-only" });
+                }
                 using (SqliteCommand up = conn.Cmd(
                     @"UPDATE suspicious_queue SET status=@st, reviewer=@r, note=@n, decided_at=@ts WHERE id=@id",
                     ("@st", status), ("@r", reviewer), ("@n", note), ("@ts", now), ("@id", id)))

@@ -21,6 +21,8 @@ D2 在「后端 + 采集端」层面已真实可用（AGENTS.md:87 已记「D2 c
 3. 点击后 `POST /api/agents/{agentId}/capture`（body 可选 `{reason:"proctor_call"}`），依据返回 `pushed` 给轻提示；成功后该图进入证据流并可在灯箱查看。
 4. 建议同时在前端补一个 `capture_now` 端到端测试（见 05-缺失 / 04-BUG）。
 
+**状态（2026-07-15）**：✅ 已实施。在「座位详情」抽屉顶部增加「点名抓图」按钮（`app.js` `openSeatDrawer` + `captureNow`），仅在该座位 `online && agentId` 时显示；点击调用 `POST /api/agents/{agentId}/capture` 并依据返回 `pushed` toast 提示。后端 D2 原已就绪，无需改动。mock 模式同样可用。
+
 ---
 
 ## U2 〔P2〕M5 健康信号在可疑队列中渲染为原始 snake_case
@@ -42,6 +44,8 @@ watchdog_restart:   { label: "看门狗重启",   fg: "#7fd3ff", bg: "#12303f", 
 ```
 并补一条 `Suspicion.KindFor` → `KIND_META` 的「kind 全表」文档，避免后人新增 kind 时漏标签（根因见 08-错漏 / 07-漂移）。
 
+**状态（2026-07-15）**：✅ 已实施。`KIND_META` 已增补 `screen_obscured`「屏幕遮挡」/`capability_degraded`「能力降级」/`watchdog_restart`「看门狗重启」三组标签（暗金配色，与既有取证主题一致）。
+
 ---
 
 ## U3 〔P3〕健康信号与作弊线索混排，信息层级不清
@@ -49,9 +53,11 @@ watchdog_restart:   { label: "看门狗重启",   fg: "#7fd3ff", bg: "#12303f", 
 **证据/影响**
 M5 健康信号（如 `screenshot_obscured` 可能仅是全屏应用，`suspected_suspend` 在 `RiskModel` 中 `=0` 仅作健康提示、不入队）以「可疑项」形态进入 `suspicious_queue`，与真正作弊线索（AI 网站 / 远控工具 / 大段粘贴）混在同一张表、同一渲染通道，无 `source/category` 区分。监考员易误判或漏看健康告警。
 
-**修复方案（需 owner 拍板，见下方「待确认」）**
-- 方案 A（最小改动）：在 `suspicious_queue` 增加 `source` 列（`os_signal` / `health` / `vision`），看板对 `health` 类用独立角标/独立「采集健康」面板呈现，不计入作弊裁决率。
-- 方案 B（较大改动）：M5 健康信号不进 `suspicious_queue`，改走独立的轻量「采集健康」流 + 座位在线状态高亮，与裁决流程解耦。
+**修复方案（已拍板：选 方案 A）**
+- ✅ **方案 A（已实施）**：在 `suspicious_queue` 增加 `source` 列（`suspicion` / `health`），M5 三类（`screen_obscured` / `capability_degraded` / `watchdog_restart`）入队时标 `source='health'`，其余（含 vision / keystroke 入队）默认 `suspicion`。看板用独立「采集健康」面板呈现 `health` 类，不混入可疑复核、不计入作弊裁决率（`/suspicious` 默认 `source='suspicion'`，新增 `/health` 只读端点）。
+- 方案 B（未采用）：M5 不进 `suspicious_queue`。因与既有归档/取证链耦合、改造成本高，且 A 已满足「解耦呈现」诉求，故未采用。
+
+**状态（2026-07-15）**：✅ 已实施。后端 `source` 列 + 迁移 + `EnqueueSuspicious` 赋值 + `/health` 端点 + 裁决拦截 health；前端分段切换「可疑复核 / 采集健康」、health 行只读并跳转座位详情。
 
 ---
 

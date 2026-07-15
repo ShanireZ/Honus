@@ -288,6 +288,15 @@ body {
   color: #b9f4cf;
 }
 .btn--ok:hover { background: #144227; }
+.btn--warn {
+  background: #3a2f0a;
+  border-color: #a9741f;
+  color: #f9e2af;
+}
+.btn--warn:hover { background: #4a3b0d; }
+/* 抽屉顶部操作条(点名抓图等) */
+.drawer-actions { display: flex; align-items: center; gap: .6rem; margin-bottom: .9rem; flex-wrap: wrap; }
+.drawer-actions__hint { color: var(--fg-2); font-size: 12px; }
 
 .topbar__clock {
   font-family: var(--mono);
@@ -493,6 +502,36 @@ body {
 .chip.is-active {
   background: var(--accent-dim);
   border-color: var(--accent);
+  color: #dbe8ff;
+}
+
+/* 队列视图分段切换(可疑复核 | 采集健康) */
+.queue-head-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.panel__tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.tab {
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+.tab + .tab { border-left: 1px solid var(--border); }
+.tab:hover { background: var(--bg-3); }
+.tab.is-active {
+  background: var(--accent-dim);
   color: #dbe8ff;
 }
 
