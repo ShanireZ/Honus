@@ -129,7 +129,13 @@ public sealed class EventIngest(Db db, ServerConfig cfg, AgentHub hub, SessionSt
     {
         if (!frame.TryGetProperty("event", out JsonElement e) || e.ValueKind != JsonValueKind.Object) return;
 
-        long seq = frame.TryGetProperty("seq", out JsonElement sq) && sq.TryGetInt64(out long s) ? s : LongProp(e, "seq");
+        // BUG#6:信封外层 seq 与内层 @event.seq 冗余(线协议)。Agent 用内层 e.Seq 签名,故**以内层为权威**;
+        // 若外层与内层不一致(协议被中间改写 / 版本错配)记告警,但不阻断(仍按内层权威 seq 验签与落库)。
+        long seq = e.TryGetProperty("seq", out JsonElement eSeqEl) && eSeqEl.TryGetInt64(out long eSeq)
+            ? eSeq
+            : (frame.TryGetProperty("seq", out JsonElement sq) && sq.TryGetInt64(out long s) ? s : 0);
+        if (frame.TryGetProperty("seq", out JsonElement outerSeq) && outerSeq.TryGetInt64(out long outerS) && outerS != seq)
+            log.LogWarning("信封外层 seq({Outer}) 与内层 seq({Inner}) 不一致(以内层为准)", outerS, seq);
         string? sig = Str(frame, "sig");
 
         string examId = Str(e, "examId") ?? "";

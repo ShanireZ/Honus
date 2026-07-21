@@ -60,6 +60,15 @@ public static class Schema
         BackfillAnalysisState(conn);
         AddColumnIfMissing(conn, "suspicious_queue", "source", "TEXT NOT NULL DEFAULT 'suspicion'"); // M5:区分可裁决作弊线索(默认)与只读健康告警
         MigrateHeartbeatPk(conn);                                       // 心跳 PK 补 exam/seat 维(旧库重建·心跳短暂可弃)
+
+        // 性能#4:为看板/检索高频查询补索引(幂等 · 既有库也补)。仅新增读取路径,不改变写入语义。
+        //   ix_images_exam_id             → /search-image 的 images JOIN(exam_id) 过滤 + 归档清理
+        //   ix_suspicious_queue_exam_*    → /suspicious、/health 按 (exam, source, status) 过滤
+        //   ix_events_exam_type / _ts     → 座位热力(M5 健康计数)与 /events 时间线按 exam 过滤
+        AddIndexIfMissing(conn, "ix_images_exam_id", "images", "(exam_id)");
+        AddIndexIfMissing(conn, "ix_suspicious_queue_exam_src_status", "suspicious_queue", "(exam_id, source, status)");
+        AddIndexIfMissing(conn, "ix_events_exam_type", "events", "(exam_id, type)");
+        AddIndexIfMissing(conn, "ix_events_exam_ts", "events", "(exam_id, ts)");
     }
 
     /// 旧 PK=(agent_id, ts) → 新 PK=(exam_id, seat_id, agent_id, ts)。心跳是 ~90s 窗口的在线指示、且归档时清理,
@@ -109,6 +118,22 @@ public static class Schema
         using SqliteCommand alter = conn.CreateCommand();
         alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {decl}";
         alter.ExecuteNonQuery();
+    }
+
+    /// 幂等补索引(性能#4):仅当 sqlite_master 中尚无同名索引才建,避免重复 CREATE 报错。
+    private static void AddIndexIfMissing(SqliteConnection conn, string name, string table, string cols)
+    {
+        bool exists;
+        using (SqliteCommand q = conn.CreateCommand())
+        {
+            q.CommandText = "SELECT 1 FROM sqlite_master WHERE type='index' AND name=$n";
+            q.Parameters.AddWithValue("$n", name);
+            exists = q.ExecuteScalar() is not null;
+        }
+        if (exists) return;
+        using SqliteCommand c = conn.CreateCommand();
+        c.CommandText = $"CREATE INDEX IF NOT EXISTS {name} ON {table}{cols}";
+        c.ExecuteNonQuery();
     }
 
     /// 先剥离 '--' 行注释,再按 ';' 切分语句。

@@ -50,34 +50,14 @@ public static class IntegrityAudit
     /// psk 非 null 时附加 sig 校验(生产必配);null 时仅验 hashSelf + 链连续(联调无 PSK)。
     public static Report Run(SqliteConnection conn, string examId, byte[]? psk = null)
     {
-        // 一次性拉取该考试全部事件,按 (agent_id, seq) 升序 —— 复现 Agent 封链的先后。
-        var byAgent = new Dictionary<string, List<Row>>();
+        // 性能#3:流式按 agent 分组处理。结果按 (agent_id, seq) 升序,读到 agent 切换或 EOF 才处理并清空其缓冲,
+        // 峰值内存由"全考试事件"降为"单 agent 事件"(极大考试不再 O(N) 撑爆内存),审计语义不变。
         var seatOf = new Dictionary<string, string>();
-        using (SqliteCommand c = conn.Cmd(
-            @"SELECT id, seat_id, agent_id, machine_id, seq, ts, type, payload, risk, evidence_image_id, hash_prev, hash_self, sig
-              FROM events WHERE exam_id=@e ORDER BY agent_id, seq", ("@e", examId)))
-        using (SqliteDataReader r = c.ExecuteReader())
-        {
-            while (r.Read())
-            {
-                var row = new Row(
-                    r.GetInt64(0), r.GetString(1), r.GetString(2),
-                    r.IsDBNull(3) ? null : r.GetString(3), r.GetInt64(4), r.GetDouble(5),
-                    r.GetString(6), r.IsDBNull(7) ? "{}" : r.GetString(7), r.GetInt32(8),
-                    r.IsDBNull(9) ? null : r.GetString(9),
-                    r.IsDBNull(10) ? null : r.GetString(10),
-                    r.IsDBNull(11) ? null : r.GetString(11),
-                    r.IsDBNull(12) ? null : r.GetString(12));
-                if (!byAgent.TryGetValue(row.AgentId, out List<Row>? list)) byAgent[row.AgentId] = list = new();
-                list.Add(row);
-                seatOf[row.AgentId] = row.SeatId;   // 取该 agent 见到的 seat(通常固定)
-            }
-        }
-
         var agents = new List<AgentChain>();
         int totalEvents = 0, totalHashOk = 0, totalChainOk = 0, totalUnverifiable = 0, totalRestart = 0;
 
-        foreach ((string agentId, List<Row> rows) in byAgent)
+        // 单 agent 连续事件的审计(与流式读取解耦,缓冲边界内存受控)。闭包捕获 examId/psk 与累计量。
+        void ProcessAgent(List<Row> rows, string agentId)
         {
             var hashMiss = new List<Issue>();
             var chainMiss = new List<Issue>();
@@ -129,8 +109,38 @@ public static class IntegrityAudit
             // (它们的链确实没断)。看板若要"纯净度",另有 totalUnverifiable / totalRestartBoundaries 正交呈现。
             totalChainOk += rows.Count - chainMiss.Count;
             agents.Add(new AgentChain(
-                agentId, seatOf[agentId], rows.Count, hashOkCount, rows.Count - chainMiss.Count, unverifiable, restart,
+                agentId, seatOf.TryGetValue(agentId, out string? s) ? s : "", rows.Count, hashOkCount, rows.Count - chainMiss.Count, unverifiable, restart,
                 hashMiss, chainMiss));
+        }
+
+        using (SqliteCommand c = conn.Cmd(
+            @"SELECT id, seat_id, agent_id, machine_id, seq, ts, type, payload, risk, evidence_image_id, hash_prev, hash_self, sig
+              FROM events WHERE exam_id=@e ORDER BY agent_id, seq", ("@e", examId)))
+        using (SqliteDataReader r = c.ExecuteReader())
+        {
+            List<Row>? buf = null;
+            string? curAgent = null;
+            while (r.Read())
+            {
+                var row = new Row(
+                    r.GetInt64(0), r.GetString(1), r.GetString(2),
+                    r.IsDBNull(3) ? null : r.GetString(3), r.GetInt64(4), r.GetDouble(5),
+                    r.GetString(6), r.IsDBNull(7) ? "{}" : r.GetString(7), r.GetInt32(8),
+                    r.IsDBNull(9) ? null : r.GetString(9),
+                    r.IsDBNull(10) ? null : r.GetString(10),
+                    r.IsDBNull(11) ? null : r.GetString(11),
+                    r.IsDBNull(12) ? null : r.GetString(12));
+                if (curAgent is null) curAgent = row.AgentId;
+                if (row.AgentId != curAgent)   // agent 切换:处理上一缓冲,起新缓冲
+                {
+                    ProcessAgent(buf!, curAgent!);
+                    buf = null;
+                    curAgent = row.AgentId;
+                }
+                (buf ??= new List<Row>()).Add(row);
+                seatOf[row.AgentId] = row.SeatId;   // 取该 agent 见到的 seat(通常固定)
+            }
+            if (buf is not null) ProcessAgent(buf, curAgent!);
         }
 
         return new Report(examId, totalEvents, totalHashOk, totalChainOk, totalUnverifiable, totalRestart, psk is not null, agents);

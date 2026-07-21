@@ -52,20 +52,33 @@ public sealed class VisionAnalysisService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         if (_analyzer is null) return;
-        _log.LogInformation("视觉分析已启用 engine={Engine} 阈值={Th}", _analyzer.Engine, _cfg.VisionConfidenceThreshold);
+        // 性能#1:有限并发。默认 concurrency=1 完全保持原串行语义(不压视觉端点);>1 时一次批量拉取 N 张并行送端点,
+        // 缩短单场大批量等待。各图分析相互独立(原子认领 + 入队去重保证不重复分析/入队),并行不破坏正确性。
+        int concurrency = Math.Clamp(_cfg.VisionConcurrency, 1, 8);
+        _log.LogInformation("视觉分析已启用 engine={Engine} 阈值={Th} 并发={C}", _analyzer.Engine, _cfg.VisionConfidenceThreshold, concurrency);
         Task backstop = RunBackstopAsync(ct);
         try
         {
-            await foreach (string imageId in _queue.Reader.ReadAllAsync(ct))
+            var batch = new List<string>(concurrency);
+            while (await _queue.Reader.WaitToReadAsync(ct))
             {
-                try { await AnalyzeOneAsync(imageId, ct); }
-                catch (OperationCanceledException) { break; }
-                catch (Exception ex) { _log.LogError(ex, "视觉分析异常 image={Image}", imageId); }
-                finally { _inflight.TryRemove(imageId, out _); }   // 出队处理完(成功/跳过/异常/取消)→ 释放在途标记(占位仍防重复分析)
+                batch.Clear();
+                while (batch.Count < concurrency && _queue.Reader.TryRead(out string? id) && id is not null) batch.Add(id);
+                if (batch.Count == 0) break;
+                await Task.WhenAll(batch.Select(id => AnalyzeWrappedAsync(id, ct)));
             }
         }
         catch (OperationCanceledException) { /* 停机 */ }
         try { await backstop; } catch { /* 停机 */ }
+    }
+
+    /// 单图分析包装:统一异常兜底 + 出队释放在途标记(占位仍防重复分析)。
+    private async Task AnalyzeWrappedAsync(string imageId, CancellationToken ct)
+    {
+        try { await AnalyzeOneAsync(imageId, ct); }
+        catch (OperationCanceledException) { /* 取消:外层循环将退出 */ }
+        catch (Exception ex) { _log.LogError(ex, "视觉分析异常 image={Image}", imageId); }
+        finally { _inflight.TryRemove(imageId, out _); }
     }
 
     /// 补偿重扫:周期性拾回 uploaded_to_ocr=0 的**触发型**证据图(被队列拒收 / 服务器重启丢内存队列的)重新入队。

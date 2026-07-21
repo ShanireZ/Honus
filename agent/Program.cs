@@ -23,6 +23,14 @@ internal static class Program
     {
         string selfExe = Environment.ProcessPath ?? "";
 
+        // 质量#6:兜底未 observed 的 fire-and-forget 任务异常(事件回调 async void 的异常栈不直观)。
+        // 至少落到 stderr 便于诊断,并标记已处理避免进程崩溃(异常仍不阻断采集主循环)。
+        TaskScheduler.UnobservedTaskException += (_, ea) =>
+        {
+            Console.Error.WriteLine($"[horus-agent] 未observed 任务异常: {ea.Exception?.GetType().Name}: {ea.Exception?.Message}");
+            ea.SetObserved();
+        };
+
         // ---- M5 保活模式分发(采集模式 = 无这些首参)----
         if (args.Length > 0)
         {

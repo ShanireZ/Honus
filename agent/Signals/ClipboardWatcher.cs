@@ -58,14 +58,22 @@ public sealed class ClipboardWatcher : ISignalSource
 
     public void Stop()
     {
-        if (_win is not null) RemoveClipboardFormatListener(_win.Handle);
-        // TODO: 干净关停消息泵(在 _thread 上 Application.ExitThread())。M1 依赖进程退出回收。
+        if (_win is not null)
+        {
+            RemoveClipboardFormatListener(_win.Handle);
+            // 干净关停 STA 消息泵:向窗口 Post 自定义消息,由 WndProc 在 STA 线程上调 Application.ExitThread 退出循环
+            // (Application.ExitThread 必须在本线程调用;跨线程调用会抛异常)。避免依赖进程退出回收(闭合第二节待办)。
+            PostMessage(_win.Handle, WmExit, IntPtr.Zero, IntPtr.Zero);
+        }
     }
 
     public void Dispose() => Stop();
 
     [DllImport("user32.dll", SetLastError = true)] private static extern bool AddClipboardFormatListener(IntPtr hwnd);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    private const uint WmExit = 0x0400 + 1;   // WM_USER+1:请求 STA 线程退出消息泵
 
     /// message-only 隐藏窗口(parent = HWND_MESSAGE)
     private sealed class MsgWindow : NativeWindow
@@ -80,7 +88,8 @@ public sealed class ClipboardWatcher : ISignalSource
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == WM_CLIPBOARDUPDATE) _onUpdate();
-            base.WndProc(ref m);
+            else if (m.Msg == WmExit) Application.ExitThread();   // 在本 STA 线程上干净退出消息泵
+            else base.WndProc(ref m);
         }
     }
 }

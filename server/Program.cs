@@ -73,6 +73,7 @@ cfg = cfg with
 {
     DataDir = Environment.GetEnvironmentVariable("HORUS_DATADIR") ?? cfg.DataDir,
     DbPath = Environment.GetEnvironmentVariable("HORUS_DBPATH") ?? cfg.DbPath,
+    ReadPoolSize = int.TryParse(Environment.GetEnvironmentVariable("HORUS_READ_POOL"), out int rp) && rp > 0 ? rp : cfg.ReadPoolSize,
     PskBase64 = Environment.GetEnvironmentVariable("HORUS_PSK_B64") ?? cfg.PskBase64,
     KeystrokeSecretBase64 = Environment.GetEnvironmentVariable("HORUS_KSK_B64") ?? cfg.KeystrokeSecretBase64,
     AdminToken = Environment.GetEnvironmentVariable("HORUS_ADMIN_TOKEN") ?? cfg.AdminToken,
@@ -81,6 +82,7 @@ cfg = cfg with
     VisionBaseUrl = Environment.GetEnvironmentVariable("HORUS_VISION_BASEURL") ?? cfg.VisionBaseUrl,
     VisionModel = Environment.GetEnvironmentVariable("HORUS_VISION_MODEL") ?? cfg.VisionModel,
     VisionApiKey = Environment.GetEnvironmentVariable("HORUS_VISION_KEY") ?? cfg.VisionApiKey,
+    VisionConcurrency = int.TryParse(Environment.GetEnvironmentVariable("HORUS_VISION_CONCURRENCY"), out int vc) && vc > 0 ? vc : cfg.VisionConcurrency,
     // M3 按图搜图 embed env 覆盖
     EmbedProvider = Environment.GetEnvironmentVariable("HORUS_EMBED_PROVIDER") ?? cfg.EmbedProvider,
     EmbedBaseUrl = Environment.GetEnvironmentVariable("HORUS_EMBED_BASEURL") ?? cfg.EmbedBaseUrl,
@@ -174,7 +176,7 @@ builder.WebHost.ConfigureKestrel(o =>
 });
 
 builder.Services.AddSingleton(cfg);
-builder.Services.AddSingleton(new Db(dataSource));
+builder.Services.AddSingleton(new Db(dataSource, cfg.ReadPoolSize));
 builder.Services.AddSingleton(new Storage(dataDir));
 builder.Services.AddSingleton<AgentHub>();          // 在线 Agent 注册表(config_update 下推)
 builder.Services.AddSingleton<EventIngest>();

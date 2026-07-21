@@ -390,3 +390,43 @@ public class IngestBodyTests
         Assert.Null(status);
     }
 }
+
+/// M5 采集端硬化:服务器侧独立复判分(不信任 Agent 自报)的自动化验收基础(第二节待办#1 真机验收的前置)。
+/// 三个健康信号应得固定 server_risk;疑似挂起=0;四个 M5 信号均归 source='health'(经「采集健康」面板呈现,不污染作弊裁决率)。
+public class M5SignalServerRiskTests
+{
+    private static readonly JsonElement Empty = JsonDocument.Parse("{}").RootElement;
+
+    [Fact] public void 屏幕遮挡服务器复判60() =>
+        Assert.Equal(RiskScores.ScreenObscured, Horus.Server.Analysis.RiskModel.Derive(SignalType.ScreenshotObscured, Empty, null, null));
+    [Fact] public void 能力降级服务器复判55() =>
+        Assert.Equal(RiskScores.CapabilityDegraded, Horus.Server.Analysis.RiskModel.Derive(SignalType.CapabilityDegraded, Empty, null, null));
+    [Fact] public void 看门狗重启服务器复判55() =>
+        Assert.Equal(RiskScores.WatchdogRestart, Horus.Server.Analysis.RiskModel.Derive(SignalType.WatchdogRestart, Empty, null, null));
+    [Fact] public void 疑似挂起服务器复判0() =>
+        Assert.Equal(0, Horus.Server.Analysis.RiskModel.Derive(SignalType.SuspectedSuspend, Empty, null, null));
+
+    [Fact] public void 四个M5信号均归健康面板()
+    {
+        foreach (SignalType t in new[]
+        {
+            SignalType.ScreenshotObscured, SignalType.CapabilityDegraded,
+            SignalType.WatchdogRestart, SignalType.SuspectedSuspend,
+        })
+            Assert.Equal("health", Horus.Server.Analysis.Suspicion.SourceForKind(Horus.Server.Analysis.Suspicion.KindFor(t, Empty)));
+    }
+}
+
+/// 第二节待办#2:both→oidc 灰度。AuthMode 驱动采集面鉴权形态——psk/both 接受 PSK ingest,oidc 不接受;oidc/both 启用 OIDC。
+/// /api/preflight 据此报告仍走 PSK 的座位数,作为切 oidc 的 go/no-go 信号(配置驱动 + preflight 已落地)。
+public class AuthModeGrayMigrationTests
+{
+    [Fact] public void psk模式接受PSK且不开OIDC() =>
+        Assert.True(Mk("psk").PskAcceptedForIngest && !Mk("psk").OidcEnabled);
+    [Fact] public void oidc模式拒PSK且开OIDC() =>
+        Assert.False(Mk("oidc").PskAcceptedForIngest && Mk("oidc").OidcEnabled);
+    [Fact] public void both模式共存PSK与OIDC() =>
+        Assert.True(Mk("both").PskAcceptedForIngest && Mk("both").OidcEnabled);
+
+    private static Horus.Server.Config.ServerConfig Mk(string mode) => new() { AuthMode = mode };
+}

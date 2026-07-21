@@ -5,9 +5,10 @@ using Horus.Contracts;
 
 namespace Horus.Agent.Signals;
 
-/// 进程启动/退出(WMI __InstanceCreation/DeletionEvent)。
+/// 进程启动/退出(WMI __InstanceCreation/DeletionEvent,事件驱动·无轮询)。
 /// 非白名单进程启动 → 高风险 + 触发抓图。
-/// TODO: 低延迟可改用 ETW(Microsoft.Diagnostics.Tracing.TraceEvent)。CommandLine 需管理员权限才非空。
+/// 事件驱动已满足"低延迟"意图;ETW(Microsoft.Diagnostics.Tracing.TraceEvent)可作为未来更低延迟/更细事件的备选,
+/// 但需引入原生依赖且仍受"CommandLine 需管理员权限才非空"限制,故保持托管的 WMI 事件监听实现。
 public sealed class ProcessWatcher : ISignalSource
 {
     public string Name => "process-watcher";

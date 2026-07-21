@@ -106,6 +106,8 @@ public sealed record ServerConfig
     public double VisionBackstopMinutes { get; init; } = 5;
     /// 单张图视觉分析的最大认领次数(含失败):临时云失败由补偿重扫重试,达此上限则放弃(防端点持续失败时死循环重扫)。默认 5。
     public int VisionMaxAttempts { get; init; } = 5;
+    /// 视觉分析并发度(单 reader 之外:一次批量拉取 N 张并行送视觉端点,提速单场大批量)。默认 1 = 串行、不压端点;上限 8。
+    public int VisionConcurrency { get; init; } = 1;
 
     // ---- §5 送云前的派生处理(owner 决策 2026-07-02:不再打码/裁剪,只降采样;供应商=境内云 MiMo·PIPL 无跨境)----
     /// 送云图长边像素上限(降采样·省 token/少送无关像素·顺带剥离元数据)。默认 1600;0=不降采样直通。
@@ -167,6 +169,9 @@ public sealed record ServerConfig
 
     /// 心跳在线判定窗口(秒):最近一次心跳在此窗口内则座位在线。
     public int OnlineWindowSeconds { get; init; } = 90;
+
+    /// 只读连接池大小(SQLite WAL 并发读:看板轮询 / 完整性审计 / 归档 copy 互不串行)。默认 4。:memory: 模式忽略(回退写连接)。
+    public int ReadPoolSize { get; init; } = 4;
 
     /// "最近风险"统计窗口(秒):座位热力取此窗口内事件的最大 risk。
     public int RecentRiskWindowSeconds { get; init; } = 300;

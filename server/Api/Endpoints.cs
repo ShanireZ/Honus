@@ -287,22 +287,51 @@ public static class Endpoints
             {
                 var list = new List<object>();
                 // M4·S6/S7:LEFT JOIN 最近一条 OIDC 会话,看板直呈 cpplearn 身份画像(用户名/昵称/道号/境界/战力/头像)。
-                // SQLite 特例:GROUP BY + MAX(issued_at) 时其余裸列取"最大 issued_at 那一行"的值。
+                // 性能#2:各相关表**先按 seat_id 各自分组聚合**(hb/ev/hlt/sq 四个 CTE),再与 seats 单次 LEFT JOIN,
+                // 避免"座位 × 多个相关子查询"在 SQLite 内形成的交叉乘积(座位越多放大越明显)。
+                // SQLite 特例:oidc_sessions 用 GROUP BY + MAX(issued_at) 时其余裸列取"最大 issued_at 那一行"的值。
                 using SqliteCommand c = conn.Cmd(
-                    @"SELECT s.seat_id, s.student_id, s.display_name, s.agent_id, s.machine_id,
-                        (SELECT MAX(ts) FROM agent_heartbeats h WHERE h.exam_id=s.exam_id AND h.seat_id=s.seat_id),
-                        (SELECT MAX(ts) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id),
-                        (SELECT COALESCE(MAX(MAX(e.risk, COALESCE(e.server_risk,0))),0) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id AND e.ts>=@rc),
-                        (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id),
-                        (SELECT COUNT(*) FROM suspicious_queue q WHERE q.exam_id=s.exam_id AND q.seat_id=s.seat_id AND q.status='pending' AND q.source='suspicion'),
-                        sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power, sess.user_type,
-                        (SELECT COUNT(*) FROM events e WHERE e.exam_id=s.exam_id AND e.seat_id=s.seat_id
-                           AND e.type IN ('watchdog_restart','suspected_suspend','screenshot_obscured','capability_degraded'))
-                      FROM seats s
-                      LEFT JOIN (SELECT exam_id, seat_id, sub, username, nickname, dao_name, avatar, realm, realm_level, combat_power, user_type, MAX(issued_at) AS mx
-                                 FROM oidc_sessions GROUP BY exam_id, seat_id) sess
-                        ON sess.exam_id=s.exam_id AND sess.seat_id=s.seat_id
-                      WHERE s.exam_id=@e ORDER BY s.seat_id",
+                    @"WITH hb AS (
+                        SELECT seat_id, MAX(ts) AS last_hb FROM agent_heartbeats WHERE exam_id=@e GROUP BY seat_id
+                      ),
+                      ev AS (
+                        SELECT seat_id,
+                               MAX(ts) AS last_ev,
+                               MAX(risk) AS max_agent_risk,
+                               MAX(COALESCE(server_risk,0)) AS max_server_risk,
+                               COUNT(*) AS ev_count
+                        FROM events WHERE exam_id=@e AND ts>=@rc GROUP BY seat_id
+                      ),
+                      hlt AS (
+                        SELECT seat_id, COUNT(*) AS health_count
+                        FROM events WHERE exam_id=@e
+                          AND type IN ('watchdog_restart','suspected_suspend','screenshot_obscured','capability_degraded')
+                        GROUP BY seat_id
+                      ),
+                      sq AS (
+                        SELECT seat_id, COUNT(*) AS susp_count
+                        FROM suspicious_queue WHERE exam_id=@e AND status='pending' AND source='suspicion'
+                        GROUP BY seat_id
+                      ),
+                      sess AS (
+                        SELECT exam_id, seat_id, sub, username, nickname, dao_name, avatar, realm, realm_level, combat_power, user_type,
+                               MAX(issued_at) AS mx
+                        FROM oidc_sessions WHERE exam_id=@e GROUP BY exam_id, seat_id
+                      )
+                    SELECT s.seat_id, s.student_id, s.display_name, s.agent_id, s.machine_id,
+                           hb.last_hb, ev.last_ev,
+                           COALESCE(MAX(ev.max_agent_risk, ev.max_server_risk),0) AS max_risk,
+                           COALESCE(ev.ev_count,0) AS ev_count,
+                           COALESCE(sq.susp_count,0),
+                           sess.sub, sess.username, sess.nickname, sess.dao_name, sess.avatar, sess.realm, sess.realm_level, sess.combat_power, sess.user_type,
+                           COALESCE(hlt.health_count,0)
+                    FROM seats s
+                    LEFT JOIN hb  ON hb.seat_id=s.seat_id
+                    LEFT JOIN ev  ON ev.seat_id=s.seat_id
+                    LEFT JOIN sq  ON sq.seat_id=s.seat_id
+                    LEFT JOIN hlt ON hlt.seat_id=s.seat_id
+                    LEFT JOIN sess ON sess.exam_id=s.exam_id AND sess.seat_id=s.seat_id
+                    WHERE s.exam_id=@e ORDER BY s.seat_id",
                     ("@e", examId), ("@rc", recentCut));
                 using SqliteDataReader r = c.ExecuteReader();
                 while (r.Read())
@@ -570,7 +599,8 @@ public static class Endpoints
                 foreach (JsonNode? sn in seatsPre)
                 {
                     string sid = (string?)sn?["seatId"] ?? "";
-                    if (sid.Length > 0 && !IsSafeId(sid)) return Results.BadRequest(new { error = "bad_seatId" });
+                    if (sid.Length == 0) return Results.BadRequest(new { error = "empty_seatId" });   // 空 seatId 不进 seats 表(脏数据污染席位关联/看板)
+                    if (!IsSafeId(sid)) return Results.BadRequest(new { error = "bad_seatId" });
                 }
 
             double now = Now();
