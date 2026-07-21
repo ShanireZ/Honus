@@ -38,16 +38,14 @@ public sealed class ImageIngest(Db db, Storage storage, ServerConfig cfg, Vision
             return;
         }
 
-        byte[] body;
-        using (var ms = new MemoryStream())
+        // 显式上限(独立于 Kestrel 全局 2MB):未鉴权者触发的缓冲放大也受约束;超限在分配 MemoryStream 前按
+        // Content-Length 拒(=BUG#1 修复 + 与 KeystrokeIngest 一致 · 质量#5 共用 helper)。
+        const int MaxImageBodyBytes = 2 * 1024 * 1024;
+        var (body, statusCode, err) = await IngestBody.ReadWithLimitAsync(req, MaxImageBodyBytes, allowEmpty: false);
+        if (body is null)
         {
-            await req.Body.CopyToAsync(ms);
-            body = ms.ToArray();
-        }
-        if (body.Length == 0)   // 空 body 不落库(否则存一张 0 字节坏图)
-        {
-            ctx.Response.StatusCode = 400;
-            await ctx.Response.WriteAsJsonAsync(new { error = "empty_body" });
+            ctx.Response.StatusCode = statusCode!.Value;
+            await ctx.Response.WriteAsJsonAsync(new { error = err });
             return;
         }
 

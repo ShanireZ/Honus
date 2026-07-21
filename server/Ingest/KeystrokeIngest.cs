@@ -17,26 +17,14 @@ public sealed class KeystrokeIngest(Db db, ServerConfig cfg)
 
     public async Task HandleAsync(HttpContext ctx)
     {
-        // 声明了超大 Content-Length 的先拒(不缓冲)。
-        if (ctx.Request.ContentLength is long declared && declared > MaxBodyBytes)
+        // 共用 ingest body 读取 + 显式上限(与 ImageIngest 同 helper · 质量#5):Content-Length 超限在分配
+        // MemoryStream 前即拒(未鉴权者也能触发的缓冲放大),实测长度兜底。
+        var (body, statusCode, err) = await IngestBody.ReadWithLimitAsync(ctx.Request, MaxBodyBytes, allowEmpty: true);
+        if (body is null)
         {
-            ctx.Response.StatusCode = 413;
-            await ctx.Response.WriteAsJsonAsync(new { error = "too_large" });
+            ctx.Response.StatusCode = statusCode!.Value;
+            await ctx.Response.WriteAsJsonAsync(new { error = err });
             return;
-        }
-
-        // 先缓冲整条 body 字节(既用于验签,也用于解析),避免流被读一次即耗尽。
-        byte[] body;
-        using (var ms = new MemoryStream())
-        {
-            await ctx.Request.Body.CopyToAsync(ms);
-            if (ms.Length > MaxBodyBytes)   // 无 Content-Length(分块)时的兜底(Kestrel 全局 2MB 之内更早收敛)
-            {
-                ctx.Response.StatusCode = 413;
-                await ctx.Response.WriteAsJsonAsync(new { error = "too_large" });
-                return;
-            }
-            body = ms.ToArray();
         }
 
         // 击键鉴权:X-Horus-KSig = HMAC(KSK, "keystroke\n"+sha256(body))。任何篡改(含改 seatId 栽赃)都会破坏签名。
@@ -124,9 +112,9 @@ public sealed class KeystrokeIngest(Db db, ServerConfig cfg)
         int pasteCount = features.TryGetProperty("pasteCount", out JsonElement pc) && pc.TryGetInt32(out int p) ? p : 0;
         double burst = features.TryGetProperty("maxBurstCharsPerSec", out JsonElement b) && b.TryGetDouble(out double bv) ? bv : 0;
 
-        if (idleThenBlock) return 70;               // 空窗后突现整段代码 → 高风险
-        if (pasteCount > 0) return 60;              // 粘贴
-        if (burst > 120) return 55;                 // 超人输入速度
+        if (idleThenBlock) return RiskScores.KeystrokeIdleThenBlock;     // 空窗后突现整段代码 → 高风险
+        if (pasteCount > 0) return RiskScores.KeystrokePaste;            // 粘贴
+        if (burst > 120) return RiskScores.KeystrokeBurst;               // 超人输入速度
         return 0;
     }
 

@@ -10,6 +10,8 @@ using Horus.Server.Analysis.Vision;
 using Horus.Server.Config;
 using Horus.Server.Data;
 using Horus.Server.Jobs;
+using Horus.Server.Ingest;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -316,6 +318,8 @@ public class FixHostMatchTests
 }
 
 /// F9:confidence 整数 1(=1%)不再被 0-1 概率启发式误放大成 100;严格 (0,1) 才放大。
+/// BUG#2 修复:1.0(小数,=100% 归一化概率)放大成 100,避免 confidence:1 且 suspicious:true 因 1<阈值而漏报。
+/// 整数 1 与 1.0 解析后同为 double 1.0,故用原始 token 是否含小数点区分(见 ParseConfidence)。
 public class FixConfidenceBoundaryTests
 {
     private static int Conf(string json) => OpenAiCompatibleVisionAnalyzer.Parse(json)!.Confidence;
@@ -323,4 +327,66 @@ public class FixConfidenceBoundaryTests
     [Fact] public void 整数1保持1_不放大()   => Assert.Equal(1, Conf("{\"suspicious\":true,\"confidence\":1}"));
     [Fact] public void 小数09仍放大到90()     => Assert.Equal(90, Conf("{\"suspicious\":true,\"confidence\":0.9}"));
     [Fact] public void 整数95不变()           => Assert.Equal(95, Conf("{\"suspicious\":true,\"confidence\":95}"));
+    // BUG#2:模型以 1.0(归一化概率)返回满分 → 放大成 100,进可疑队列(原实现保持 1 → 1<阈值漏报)。
+    [Fact] public void 小数1dot0放大到100()   => Assert.Equal(100, Conf("{\"suspicious\":true,\"confidence\":1.0}"));
+}
+
+/// BUG#1 / 质量#5:ingest body 共用读取 + 显式大小上限。Content-Length 超限在分配 MemoryStream 前即拒;
+/// 实测长度兜底;空 body 按 allowEmpty 决定拒/收。ImageIngest 与 KeystrokeIngest 共用此 helper。
+public class IngestBodyTests
+{
+    private static DefaultHttpContext Ctx(long? contentLength, byte[] body)
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Request.ContentLength = contentLength;
+        ctx.Request.Body = new MemoryStream(body);
+        return ctx;
+    }
+
+    [Fact]
+    public async Task 声明超限_前置拒绝不读body()
+    {
+        var (body, status, err) = await IngestBody.ReadWithLimitAsync(Ctx(1000, []).Request, 100);
+        Assert.Null(body);
+        Assert.Equal(413, status);
+        Assert.Equal("too_large", err);
+    }
+
+    [Fact]
+    public async Task 实测超限_兜底拒绝()
+    {
+        var (body, status, err) = await IngestBody.ReadWithLimitAsync(Ctx(null, new byte[200]).Request, 100);
+        Assert.Null(body);
+        Assert.Equal(413, status);
+        Assert.Equal("too_large", err);
+    }
+
+    [Fact]
+    public async Task 正常body_返回字节()
+    {
+        var data = Encoding.UTF8.GetBytes("hello-ingest");
+        var (body, status, err) = await IngestBody.ReadWithLimitAsync(Ctx(data.Length, data).Request, 1024);
+        Assert.NotNull(body);
+        Assert.Equal(data, body);
+        Assert.Null(status);
+        Assert.Null(err);
+    }
+
+    [Fact]
+    public async Task 空body_allowEmptyFalse_拒()
+    {
+        var (body, status, err) = await IngestBody.ReadWithLimitAsync(Ctx(0, []).Request, 1024, allowEmpty: false);
+        Assert.Null(body);
+        Assert.Equal(400, status);
+        Assert.Equal("empty_body", err);
+    }
+
+    [Fact]
+    public async Task 空body_allowEmptyTrue_收()
+    {
+        var (body, status, err) = await IngestBody.ReadWithLimitAsync(Ctx(0, []).Request, 1024, allowEmpty: true);
+        Assert.NotNull(body);
+        Assert.Empty(body);
+        Assert.Null(status);
+    }
 }

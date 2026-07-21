@@ -38,38 +38,38 @@ public static class RiskModel
         switch (type)
         {
             case SignalType.BrowserUrl:
-                if (StrEq(payload, "note", "url_unreadable")) return 40;   // 读不到 URL 的降级:强制人工看图
+                if (StrEq(payload, "note", "url_unreadable")) return RiskScores.BrowserUrlUnreadable;   // 读不到 URL 的降级:强制人工看图
                 if (TryStr(payload, "url", out string? url) && !string.IsNullOrEmpty(url))
                 {
                     string host = HostOf(url!);
                     // 空 host = 浏览器内部页(about:blank / data: / chrome://)或解析失败 → 不加码(F11:免把内部页误判高危;
                     // 真实 Agent 的内部页本走 url_unreadable,此为服务器侧纵深)。
                     if (host.Length == 0) return 0;
-                    if (HostMatchesAny(host, AiHosts)) return 80;           // 独立判定:AI 站
-                    if (HostMatchesAny(host, SearchHosts)) return 70;       // 独立判定:搜索引擎
+                    if (HostMatchesAny(host, AiHosts)) return RiskScores.BrowserUrlAi;           // 独立判定:AI 站
+                    if (HostMatchesAny(host, SearchHosts)) return RiskScores.BrowserUrlSearch;    // 独立判定:搜索引擎
                     if (whitelistHosts is not null)
-                        return HostWhitelisted(host, whitelistHosts) ? 0 : 80;   // 有白名单可判:非白名单站高危
+                        return HostWhitelisted(host, whitelistHosts) ? 0 : RiskScores.BrowserUrlNonWhitelist;   // 有白名单可判:非白名单站高危
                 }
                 return 0;   // 无 URL / 无白名单可判 → 服务器不加码,交由 max(agentRisk) 承接
 
             case SignalType.ProcessStart:
                 string proc = ProcName(payload);
-                if (proc.Length > 0 && MatchAny(proc, RemoteToolProcs)) return 70;   // 独立判定:远控工具
+                if (proc.Length > 0 && MatchAny(proc, RemoteToolProcs)) return RiskScores.RemoteTool;   // 独立判定:远控工具
                 if (whitelistProcs is not null && proc.Length > 0)
-                    return whitelistProcs.Contains(proc) ? 0 : 70;
+                    return whitelistProcs.Contains(proc) ? 0 : RiskScores.NonWhitelistProc;
                 return 0;
 
             case SignalType.Clipboard:
                 // **不信任 Agent 的 `large` 自报**:从 payload 的 len/lines 独立复判(闭合"签 large=false 低估逃逸")。
-                return IsLargePaste(payload, pasteCharThreshold) ? 60 : 0;
+                return IsLargePaste(payload, pasteCharThreshold) ? RiskScores.LargePaste : 0;
 
-            case SignalType.Usb:         return 50;
-            case SignalType.AltTabBurst: return 40;
+            case SignalType.Usb:         return RiskScores.Usb;
+            case SignalType.AltTabBurst: return RiskScores.AltTabBurst;
 
             // M5 采集端硬化:服务器独立赋分(不信 Agent 自报),让规避暴露入队人工复核。
-            case SignalType.ScreenshotObscured: return 60;   // 考中遮屏/黑帧 → 入可疑队列
-            case SignalType.CapabilityDegraded: return 55;   // 采集能力被削弱(非管理员/信号源失败)→ 入队
-            case SignalType.WatchdogRestart:    return 55;   // 采集进程曾被结束(规避取证)→ 入队
+            case SignalType.ScreenshotObscured: return RiskScores.ScreenObscured;   // 考中遮屏/黑帧 → 入可疑队列
+            case SignalType.CapabilityDegraded: return RiskScores.CapabilityDegraded;   // 采集能力被削弱(非管理员/信号源失败)→ 入队
+            case SignalType.WatchdogRestart:    return RiskScores.WatchdogRestart;    // 采集进程曾被结束(规避取证)→ 入队
             // suspected_suspend:风险 0,不计入作弊裁决;经「采集健康」面板呈现(与另三个 M5 信号同源),睡眠/锁屏等合法情形也提示监考员关注。
 
             default:                     return 0;   // window_focus / process_exit / heartbeat / screenshot / suspected_suspend

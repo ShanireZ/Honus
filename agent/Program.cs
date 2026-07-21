@@ -244,19 +244,19 @@ internal static class Program
             {
                 ["reason"] = ScreenQuality.ReasonLabel(r),
                 ["variance"] = stats.LumaVariance, ["width"] = stats.Width, ["height"] = stats.Height,
-            }, Risk: 60));
+            }, Risk: RiskScores.ScreenObscured));
         };
         // ② 异常重启取证:启动读旧标记,若上次未正常退出 → 上报 watchdog_restart。
         string markerPath = Path.Combine(AppContext.BaseDirectory, "horus-agent.marker");
         if (RestartClassifier.IsUnexpectedRestart(RestartMarker.ReadThenMarkRunning(markerPath)))
-            Handle(new RawSignal(SignalType.WatchdogRestart, new() { ["reason"] = "unexpected_prev_exit" }, Risk: 55));
+            Handle(new RawSignal(SignalType.WatchdogRestart, new() { ["reason"] = "unexpected_prev_exit" }, Risk: RiskScores.WatchdogRestart));
         // ③ 能力降级:非管理员 / 信号源启动失败 → 上报 capability_degraded。
         if (!WinPrivilege.IsAdministrator())
             Handle(new RawSignal(SignalType.CapabilityDegraded,
-                new() { ["capability"] = "admin", ["status"] = "not_elevated", ["detail"] = "采集需管理员权限跑 ETW/UIA/WMI" }, Risk: 55));
+                new() { ["capability"] = "admin", ["status"] = "not_elevated", ["detail"] = "采集需管理员权限跑 ETW/UIA/WMI" }, Risk: RiskScores.CapabilityDegraded));
         foreach (string name in failedSources)
             Handle(new RawSignal(SignalType.CapabilityDegraded,
-                new() { ["capability"] = name, ["status"] = "start_failed" }, Risk: 55));
+                new() { ["capability"] = name, ["status"] = "start_failed" }, Risk: RiskScores.CapabilityDegraded));
 
         _ = Task.Run(() => BaselineLoop(live, capturer, ct));
         _ = Task.Run(() => HeartbeatLoop(Handle, ct));

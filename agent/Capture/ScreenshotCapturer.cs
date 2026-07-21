@@ -10,8 +10,9 @@ using IsImage = SixLabors.ImageSharp.Image;
 
 namespace Horus.Agent.Capture;
 
-/// 抓屏 → 缩放到目标高度 → WebP 编码 → pHash →(可选去重)→ 交上传委托,返回 imageId。
-/// 抓图串行化(SemaphoreSlim),避免并发触发时 _lastPhash 竞争。
+/// 抓屏 → 缩放到目标高度 → WebP 编码 → pHash →(可选去重)→ 交上传委托,返回主屏 imageId。
+/// 抓图串行化(SemaphoreSlim),避免并发触发时去重状态竞争。
+/// 多显示器(BUG#4):遍历 Screen.AllScreens 每张都抓一张(覆盖"第二显示器"盲区);主屏 imageId 作为事件关联锚点。
 public sealed class ScreenshotCapturer : IDisposable
 {
     private readonly LiveConfig _live;                                     // 目标高度 / WebP 质量可热更新
@@ -19,8 +20,8 @@ public sealed class ScreenshotCapturer : IDisposable
     private readonly SemaphoreSlim _sem = new(1, 1);
     private readonly TimeSpan _minGap = TimeSpan.FromMilliseconds(1500);   // 触发型连发去抖
     private DateTime _lastUtc = DateTime.MinValue;
-    private ulong _lastPhash;
-    private bool _hasLast;
+    // 每屏独立去重状态(按设备名 key,随显示器插拔动态):避免多屏互相干扰。
+    private readonly Dictionary<string, (ulong Phash, bool Has)> _lastByScreen = new();
 
     /// M5 防遮蔽:每帧算出廉价 luma 统计喂给此回调(Program 接 ScreenQuality 分类 → 疑似遮蔽则上报)。可空=不检测。
     public Action<ScreenStats>? OnStats { get; set; }
@@ -32,6 +33,7 @@ public sealed class ScreenshotCapturer : IDisposable
     }
 
     /// dedupAgainstLast=true:对静止画面做 pHash 去重(随机基线层传 false——每张都要留)。
+    /// 多显示器:每张屏各抓一张并分别上传;主屏(Primary)的 imageId 作为事件关联锚点返回。
     public async Task<string?> CaptureAsync(string trigger, bool dedupAgainstLast)
     {
         await _sem.WaitAsync().ConfigureAwait(false);
@@ -40,31 +42,47 @@ public sealed class ScreenshotCapturer : IDisposable
             if (dedupAgainstLast && DateTime.UtcNow - _lastUtc < _minGap) return null;
             _lastUtc = DateTime.UtcNow;
 
-            byte[] webp;
-            ulong phash;
-            using (Bitmap bmp = GrabPrimaryScreen())
-            using (IsImage img = ToImageSharp(bmp))
+            // 多显示器:每张屏都抓(覆盖第二屏盲区 · BUG#4)。
+            var screens = System.Windows.Forms.Screen.AllScreens;
+            string? primaryId = null;
+            bool statsReported = false;
+            for (int i = 0; i < screens.Length; i++)
             {
-                Downscale(img, _live.TargetHeight);
-                // M5:每帧算 luma 统计喂遮蔽检测(在去重之前,保证每帧都查)。检测失败不影响主采集。
-                if (OnStats is not null)
-                    try { OnStats(ComputeLumaStats(img)); } catch { /* 遮蔽检测异常吞掉 */ }
-                phash = PerceptualHash.DHash(img);
-                if (dedupAgainstLast && _hasLast && PerceptualHash.Hamming(phash, _lastPhash) <= 3)
-                    return null;                                  // 与上一张几乎一致,丢弃
-                _lastPhash = phash;
-                _hasLast = true;
-                webp = EncodeWebp(img, _live.WebpQuality);
+                var screen = screens[i];
+                byte[] webp;
+                ulong phash;
+                using (Bitmap bmp = GrabScreen(screen))
+                using (IsImage img = ToImageSharp(bmp))
+                {
+                    Downscale(img, _live.TargetHeight);
+                    // M5:每帧算 luma 统计喂遮蔽检测。仅主屏喂(保持原 M5 语义:单路遮蔽判定),检测失败不影响主采集。
+                    if (OnStats is not null && !statsReported && screen.Primary)
+                        try { OnStats(ComputeLumaStats(img)); statsReported = true; } catch { /* 遮蔽检测异常吞掉 */ }
+                    phash = PerceptualHash.DHash(img);
+
+                    // 每屏独立去重(静止画面跳过),避免多屏互相干扰;key=设备名(随插拔动态)。
+                    string key = screen.DeviceName;
+                    _lastByScreen.TryGetValue(key, out var last);
+                    if (dedupAgainstLast && last.Has && PerceptualHash.Hamming(phash, last.Phash) <= 3)
+                        continue;   // 该屏静止,跳过上传(继续抓其余屏)
+                    _lastByScreen[key] = (phash, true);
+
+                    webp = EncodeWebp(img, _live.WebpQuality);
+                }
+                // 多屏时在 trigger 追加 :screen{i},服务端 isEvent 判定(StartsWith "event:")与基线抽样不受影响。
+                string? id = await _upload(webp, trigger + (screens.Length > 1 ? $":screen{i}" : ""), phash).ConfigureAwait(false);
+                if (screen.Primary) primaryId = id;     // 主屏作为事件关联锚点
+                if (primaryId is null) primaryId = id;  // 无主屏时兜底
             }
-            return await _upload(webp, trigger, phash).ConfigureAwait(false);
+            return primaryId;
         }
         finally { _sem.Release(); }
     }
 
-    private static Bitmap GrabPrimaryScreen()
+    private static Bitmap GrabScreen(System.Windows.Forms.Screen screen)
     {
-        // TODO: 多显示器 → 遍历 Screen.AllScreens 各抓一张(覆盖"第二显示器"盲区)。
-        var b = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+        // 多显示器:用各屏 Bounds(虚拟屏幕坐标)抓取,覆盖第二屏盲区(BUG#4)。
+        var b = screen.Bounds;
         var bmp = new Bitmap(b.Width, b.Height, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
         g.CopyFromScreen(b.Left, b.Top, 0, 0, b.Size);

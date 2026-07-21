@@ -129,16 +129,28 @@ public sealed class OpenAiCompatibleVisionAnalyzer : IVisionAnalyzer
     }
 
     /// confidence 容忍整数 / 小数(95.0)/ 字符串("95")/ 0-1 概率(0.95→95),统一钳到 0-100 整数,避免误归零致漏报。
+    /// 0-1 概率放大边界(BUG#2 修复):用原始 token 是否含小数点区分「整数 1(=1%,保持 F9 不放大以防假阳性)」
+    /// 与「1.0(=100% 归一化概率,放大防漏报)」—— JSON 解析后二者皆为 double 1.0,无法靠值区分,故看原始文本。
     private static int ParseConfidence(JsonElement o, string k)
     {
         if (!o.TryGetProperty(k, out JsonElement e)) return 0;
         double d;
-        if (e.ValueKind == JsonValueKind.Number) { if (!e.TryGetDouble(out d)) return 0; }
+        bool hasDecimal;
+        if (e.ValueKind == JsonValueKind.Number)
+        {
+            if (!e.TryGetDouble(out d)) return 0;
+            hasDecimal = e.GetRawText().IndexOf('.') >= 0;   // "1" vs "1.0" 区分依据
+        }
         else if (e.ValueKind == JsonValueKind.String &&
-                 double.TryParse(e.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double sd)) d = sd;
+                 double.TryParse(e.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double sd))
+        {
+            d = sd;
+            hasDecimal = (e.GetString() ?? "").IndexOf('.') >= 0;
+        }
         else return 0;
-        // 仅**严格 (0,1)** 视为 0-1 概率放大;整数 1 保持 1(=1%,几近无把握),不再被误放大成 100(闭合第三轮 F9 边界)。
-        if (d > 0 && d < 1) d *= 100;
+        // 严格 (0,1) 概率 → 放大成百分比;恰好 1.0 且为小数(token 含 '.')→ 视为归一化概率放大成 100(修复漏报);
+        // 整数 1(无小数点)保持 1(=1%,F9:避免把"1%"误放大成 100% 致假阳性)。
+        if (d > 0 && (d < 1 || (d == 1.0 && hasDecimal))) d *= 100;
         return (int)Math.Clamp(Math.Round(d), 0, 100);
     }
 
